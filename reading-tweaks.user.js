@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 优化脚本 (移动端/桌面端)
 // @namespace    http://tampermonkey.net/
-// @version      2.2
+// @version      2.3
 // @description  优化AO3阅读和浏览体验。移动端阅读字号放大；在所有作品列表页（搜索、书签、用户主页等）高亮字数和Kudos，并移动到标题旁，字数统一以“万”为单位显示。通过菜单项管理关键词屏蔽。
 // @author       Gemini
 // @match        https://archiveofourown.org/*
@@ -130,6 +130,8 @@
     // 创建模态框
     const modal = document.createElement('div');
     modal.id = 'ao3-block-modal';
+    // 修正：确保 modal 的 display 默认为 none
+    modal.style.cssText = 'display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 9999; overflow-y: auto;';
     modal.innerHTML = `
         <div style="background:#fff; margin: 15% auto; padding: 20px; border-radius: 5px; width: 80%; max-width: 500px; box-shadow: 0 4px 8px rgba(0,0,0,0.2); font-family: Arial, sans-serif;">
             <h3 style="margin-top: 0;">AO3 关键词屏蔽设置</h3>
@@ -171,8 +173,10 @@
     function showModal() {
         input.value = localStorage.getItem('ao3-block-keywords') || '';
         overlay.style.display = 'block';
+        // 修正：确保 modal 元素正确显示其内部内容
         modal.style.display = 'block';
-        input.focus();
+        // 确保输入框获得焦点
+        setTimeout(() => input.focus(), 10);
     }
 
     // 隐藏模态框
