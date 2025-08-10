@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 优化脚本 (移动端/桌面端)
 // @namespace    http://tampermonkey.net/
-// @version      2.4
+// @version      2.5
 // @description  优化AO3阅读和浏览体验。移动端阅读字号放大；在所有作品列表页（搜索、书签、用户主页等）高亮字数和Kudos，并移动到标题旁，字数统一以“万”为单位显示。通过菜单项管理关键词屏蔽。
 // @author       Gemini
 // @match        https://archiveofourown.org/*
@@ -136,29 +136,46 @@
         top: 0; left: 0; right: 0; bottom: 0;
         z-index: 9999;
         overflow-y: auto;
+        padding: 20px;
+        box-sizing: border-box;
     `;
     document.body.appendChild(modal);
 
     // 创建模态框内容
     const modalContent = document.createElement('div');
+    modalContent.style.cssText = `
+        background: #fff;
+        margin: 5% auto;
+        padding: 25px;
+        border-radius: 8px;
+        width: 90%;
+        max-width: 550px;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    `;
     modalContent.innerHTML = `
-        <div style="background:#fff; margin: 15% auto; padding: 20px; border-radius: 5px; width: 80%; max-width: 500px; box-shadow: 0 4px 8px rgba(0,0,0,0.2); font-family: Arial, sans-serif;">
-            <h3 style="margin-top: 0;">AO3 关键词屏蔽设置</h3>
-            <label>
-                屏蔽关键词（英文逗号分隔）:
-                <textarea id="ao3-block-input" rows="4" cols="50" placeholder="例: 怀孕,AU,斜线" style="width: 100%; box-sizing: border-box; margin-top: 5px;"></textarea>
-            </label>
-            <br><br>
-            <button id="ao3-block-save" style="padding: 8px 16px; background-color: #007bff; color: white; border: none; border-radius: 3px; cursor: pointer;">应用</button>
-            <button id="ao3-block-clear" style="padding: 8px 16px; background-color: #6c757d; color: white; border: none; border-radius: 3px; cursor: pointer; margin-left: 10px;">清空</button>
-            <button id="ao3-block-close" style="padding: 8px 16px; background-color: #28a745; color: white; border: none; border-radius: 3px; cursor: pointer; float: right;">关闭</button>
-            <div style="clear: both;"></div>
+        <h3 style="margin-top: 0; color: #333; border-bottom: 1px solid #eee; padding-bottom: 10px;">AO3 关键词屏蔽设置</h3>
+        <label style="display: block; margin-bottom: 15px; color: #555;">
+            屏蔽关键词（英文逗号分隔）:
+            <textarea id="ao3-block-input" rows="4" placeholder="例: 怀孕,AU,斜线" style="width: 100%; box-sizing: border-box; margin-top: 8px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; resize: vertical;"></textarea>
+        </label>
+        <div style="text-align: right; margin-top: 20px;">
+            <button id="ao3-block-clear" style="padding: 8px 16px; background-color: #f8f9fa; color: #212529; border: 1px solid #dee2e6; border-radius: 4px; cursor: pointer; margin-right: 10px; font-size: 14px; transition: background-color 0.2s;">清空</button>
+            <button id="ao3-block-close" style="padding: 8px 16px; background-color: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; margin-right: 10px; font-size: 14px; transition: background-color 0.2s;">取消</button>
+            <button id="ao3-block-save" style="padding: 8px 16px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; transition: background-color 0.2s;">应用</button>
         </div>
     `;
     modal.appendChild(modalContent);
 
-    /* ---------- 2. 样式 ---------- */
-    // 样式已内联在元素中，以简化逻辑
+    /* ---------- 2. 样式 (按钮悬停效果) ---------- */
+    const style = document.createElement('style');
+    style.textContent = `
+        #ao3-block-save:hover { background-color: #0056b3 !important; }
+        #ao3-block-clear:hover { background-color: #e2e6ea !important; border-color: #dae0e5 !important; }
+        #ao3-block-close:hover { background-color: #545b62 !important; }
+        #ao3-block-input:focus { border-color: #007bff !important; outline: 0 !important; box-shadow: 0 0 0 0.2rem rgba(0,123,255,.25) !important; }
+    `;
+    document.head.appendChild(style);
 
     /* ---------- 3. 逻辑 ---------- */
     const input   = modal.querySelector('#ao3-block-input');
