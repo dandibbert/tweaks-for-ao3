@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 优化脚本 (移动端/桌面端)
 // @namespace    http://tampermonkey.net/
-// @version      2.5
+// @version      2.2
 // @description  优化AO3阅读和浏览体验。移动端阅读字号放大；在所有作品列表页（搜索、书签、用户主页等）高亮字数和Kudos，并移动到标题旁，字数统一以“万”为单位显示。通过菜单项管理关键词屏蔽。
 // @author       Gemini
 // @match        https://archiveofourown.org/*
@@ -152,28 +152,77 @@
         max-width: 550px;
         box-shadow: 0 5px 15px rgba(0,0,0,0.3);
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        position: relative; /* 为关闭按钮定位 */
     `;
-    modalContent.innerHTML = `
+    
+    // 添加一个关闭图标 (X) 在右上角
+    const closeIcon = document.createElement('span');
+    closeIcon.innerHTML = '&times;';
+    closeIcon.style.cssText = `
+        position: absolute;
+        top: 15px;
+        right: 20px;
+        font-size: 28px;
+        font-weight: bold;
+        cursor: pointer;
+        color: #aaa;
+    `;
+    closeIcon.addEventListener('click', hideModal);
+    modalContent.appendChild(closeIcon);
+
+    modalContent.innerHTML += `
         <h3 style="margin-top: 0; color: #333; border-bottom: 1px solid #eee; padding-bottom: 10px;">AO3 关键词屏蔽设置</h3>
         <label style="display: block; margin-bottom: 15px; color: #555;">
             屏蔽关键词（英文逗号分隔）:
             <textarea id="ao3-block-input" rows="4" placeholder="例: 怀孕,AU,斜线" style="width: 100%; box-sizing: border-box; margin-top: 8px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; resize: vertical;"></textarea>
         </label>
         <div style="text-align: right; margin-top: 20px;">
-            <button id="ao3-block-clear" style="padding: 8px 16px; background-color: #f8f9fa; color: #212529; border: 1px solid #dee2e6; border-radius: 4px; cursor: pointer; margin-right: 10px; font-size: 14px; transition: background-color 0.2s;">清空</button>
-            <button id="ao3-block-close" style="padding: 8px 16px; background-color: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; margin-right: 10px; font-size: 14px; transition: background-color 0.2s;">取消</button>
-            <button id="ao3-block-save" style="padding: 8px 16px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; transition: background-color 0.2s;">应用</button>
+            <button id="ao3-block-clear" class="ao3-btn ao3-btn-secondary" style="margin-right: 10px;">清空</button>
+            <button id="ao3-block-close" class="ao3-btn ao3-btn-secondary">取消</button>
+            <button id="ao3-block-save" class="ao3-btn ao3-btn-primary" style="margin-left: 10px;">应用</button>
         </div>
     `;
     modal.appendChild(modalContent);
 
-    /* ---------- 2. 样式 (按钮悬停效果) ---------- */
+    /* ---------- 2. 样式 (按钮和整体美化) ---------- */
     const style = document.createElement('style');
     style.textContent = `
-        #ao3-block-save:hover { background-color: #0056b3 !important; }
-        #ao3-block-clear:hover { background-color: #e2e6ea !important; border-color: #dae0e5 !important; }
-        #ao3-block-close:hover { background-color: #545b62 !important; }
-        #ao3-block-input:focus { border-color: #007bff !important; outline: 0 !important; box-shadow: 0 0 0 0.2rem rgba(0,123,255,.25) !important; }
+        .ao3-btn {
+            padding: 8px 16px;
+            border: 1px solid transparent;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s ease-in-out;
+            outline: none; /* 移除默认焦点轮廓 */
+        }
+        .ao3-btn:focus {
+            box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25); /* 自定义焦点轮廓 */
+        }
+        .ao3-btn-primary {
+            background-color: #007bff; /* Bootstrap 主色蓝 */
+            color: #fff;
+        }
+        .ao3-btn-primary:hover {
+            background-color: #0056b3; /* 深蓝悬停 */
+        }
+        .ao3-btn-secondary {
+            background-color: #6c757d; /* Bootstrap 次色灰 */
+            color: #fff;
+        }
+        .ao3-btn-secondary:hover {
+            background-color: #545b62; /* 深灰悬停 */
+        }
+        #ao3-block-input:focus {
+            border-color: #007bff;
+            box-shadow: 0 0 0 0.2rem rgba(0,123,255,.25);
+        }
+        #ao3-block-modal h3 {
+             margin-top: 0;
+             color: #333;
+             border-bottom: 1px solid #eee;
+             padding-bottom: 10px;
+        }
     `;
     document.head.appendChild(style);
 
@@ -229,7 +278,12 @@
     });
 
     closeBtn.addEventListener('click', hideModal);
-    overlay.addEventListener('click', hideModal);
+    // 点击遮罩层关闭模态框
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) {
+             hideModal();
+        }
+    });
 
     // 注册菜单命令
     GM_registerMenuCommand("AO3 - 设置关键词屏蔽", showModal);
