@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         AO3 优化脚本 (移动端/桌面端)
 // @namespace    http://tampermonkey.net/
-// @version      2.1
-// @description  优化AO3阅读和浏览体验。移动端阅读字号放大；在所有作品列表页（搜索、书签、用户主页等）高亮字数和Kudos，并移动到标题旁，字数统一以“万”为单位显示。
+// @version      2.2
+// @description  优化AO3阅读和浏览体验。移动端阅读字号放大；在所有作品列表页（搜索、书签、用户主页等）高亮字数和Kudos，并移动到标题旁，字数统一以“万”为单位显示。通过菜单项管理关键词屏蔽。
 // @author       Gemini
 // @match        https://archiveofourown.org/*
 // @grant        GM_addStyle
+// @grant        GM_registerMenuCommand
 // @run-at       document-end
 // ==/UserScript==
 
@@ -104,92 +105,57 @@
     }
 
 /* —————————————
-   关键词屏蔽浮层面板
+   关键词屏蔽功能 (通过菜单项触发)
    ————————————— */
 (function buildKeywordPanel() {
-    /* ---------- 1. UI 结构 ---------- */
-    // 容器
-    const panel = document.createElement('div');
-    panel.id = 'ao3-block-panel';
-    panel.innerHTML = `
-        <a href="#" id="ao3-block-toggle" title="关键词屏蔽">⚙️</a>
-        <div id="ao3-block-form">
+    // 检查是否支持 GM_registerMenuCommand
+    if (typeof GM_registerMenuCommand === 'undefined') {
+        console.warn('AO3 优化脚本: GM_registerMenuCommand 未定义，关键词屏蔽功能可能无法通过菜单访问。');
+        return;
+    }
+
+    /* ---------- 1. UI 结构 (使用模态框) ---------- */
+    // 创建遮罩层
+    const overlay = document.createElement('div');
+    overlay.id = 'ao3-block-overlay';
+    overlay.style.cssText = `
+        display: none;
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background-color: rgba(0, 0, 0, 0.5);
+        z-index: 9998;
+    `;
+    document.body.appendChild(overlay);
+
+    // 创建模态框
+    const modal = document.createElement('div');
+    modal.id = 'ao3-block-modal';
+    modal.innerHTML = `
+        <div style="background:#fff; margin: 15% auto; padding: 20px; border-radius: 5px; width: 80%; max-width: 500px; box-shadow: 0 4px 8px rgba(0,0,0,0.2); font-family: Arial, sans-serif;">
+            <h3 style="margin-top: 0;">AO3 关键词屏蔽设置</h3>
             <label>
                 屏蔽关键词（英文逗号分隔）:
-                <textarea id="ao3-block-input" rows="3" cols="30" placeholder="例: 怀孕,AU,斜线"></textarea>
+                <textarea id="ao3-block-input" rows="4" cols="50" placeholder="例: 怀孕,AU,斜线" style="width: 100%; box-sizing: border-box; margin-top: 5px;"></textarea>
             </label>
-            <br>
-            <button id="ao3-block-save">应用</button>
-            <a href="#" id="ao3-block-clear">清空</a>
-        </div>`;
-    document.body.appendChild(panel);
+            <br><br>
+            <button id="ao3-block-save" style="padding: 8px 16px; background-color: #007bff; color: white; border: none; border-radius: 3px; cursor: pointer;">应用</button>
+            <button id="ao3-block-clear" style="padding: 8px 16px; background-color: #6c757d; color: white; border: none; border-radius: 3px; cursor: pointer; margin-left: 10px;">清空</button>
+            <button id="ao3-block-close" style="padding: 8px 16px; background-color: #28a745; color: white; border: none; border-radius: 3px; cursor: pointer; float: right;">关闭</button>
+            <div style="clear: both;"></div>
+        </div>
+    `;
+    document.body.appendChild(modal);
 
     /* ---------- 2. 样式 ---------- */
-    GM_addStyle(`
-        #ao3-block-panel{
-            position:fixed;
-            top:10px;
-            right:10px;
-            z-index:9999;
-            font-family:Arial,Helvetica,sans-serif;
-            font-size:13px;
-            color:#333;
-        }
-        #ao3-block-toggle{
-            display:inline-block;
-            background:#ffe45e;
-            padding:4px 8px;
-            border-radius:50%;
-            text-decoration:none;
-            box-shadow:0 0 3px #0002;
-        }
-        #ao3-block-form{
-            display:none;
-            margin-top:6px;
-            padding:8px;
-            background:#fff;
-            border:1px solid #ccc;
-            border-radius:5px;
-            box-shadow:0 2px 6px #0003;
-        }
-        #ao3-block-panel.open #ao3-block-form{display:block;}
-        #ao3-block-input{width:100%;box-sizing:border-box;}
-        #ao3-block-form button{margin-top:4px;margin-right:6px;}
-    `);
+    // 样式已内联在元素中，以简化逻辑
 
     /* ---------- 3. 逻辑 ---------- */
-    const toggle  = panel.querySelector('#ao3-block-toggle');
-    const form    = panel.querySelector('#ao3-block-form');
-    const input   = panel.querySelector('#ao3-block-input');
-    const saveBtn = panel.querySelector('#ao3-block-save');
-    const clearBtn= panel.querySelector('#ao3-block-clear');
+    const input   = modal.querySelector('#ao3-block-input');
+    const saveBtn = modal.querySelector('#ao3-block-save');
+    const clearBtn= modal.querySelector('#ao3-block-clear');
+    const closeBtn= modal.querySelector('#ao3-block-close');
 
-    toggle.addEventListener('click', e => {
-        e.preventDefault();
-        panel.classList.toggle('open');
-        if (!panel.classList.contains('open')) return;
-        // 打开时把已存词显示出来
-        input.value = localStorage.getItem('ao3-block-keywords') || '';
-        input.focus();
-    });
-
-    saveBtn.addEventListener('click', () => {
-        // 更新存储
-        const raw = input.value.trim();
-        localStorage.setItem('ao3-block-keywords', raw);
-        // 重新屏蔽
-        doBlock(raw);
-        panel.classList.remove('open');
-    });
-
-    clearBtn.addEventListener('click', e => {
-        e.preventDefault();
-        localStorage.removeItem('ao3-block-keywords');
-        input.value = '';
-        doBlock('');
-    });
-
-    /* 统一屏蔽函数（也用于首次加载） */
+    // 统一屏蔽函数（也用于首次加载）
     function doBlock(rawList) {
         const kws = rawList.split(',')
                            .map(k => k.trim().toLowerCase())
@@ -201,9 +167,43 @@
         });
     }
 
+    // 显示模态框
+    function showModal() {
+        input.value = localStorage.getItem('ao3-block-keywords') || '';
+        overlay.style.display = 'block';
+        modal.style.display = 'block';
+        input.focus();
+    }
+
+    // 隐藏模态框
+    function hideModal() {
+        overlay.style.display = 'none';
+        modal.style.display = 'none';
+    }
+
+    // 事件监听
+    saveBtn.addEventListener('click', () => {
+        const raw = input.value.trim();
+        localStorage.setItem('ao3-block-keywords', raw);
+        doBlock(raw);
+        hideModal();
+    });
+
+    clearBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        localStorage.removeItem('ao3-block-keywords');
+        input.value = '';
+        doBlock('');
+    });
+
+    closeBtn.addEventListener('click', hideModal);
+    overlay.addEventListener('click', hideModal);
+
+    // 注册菜单命令
+    GM_registerMenuCommand("AO3 - 设置关键词屏蔽", showModal);
+
     /* 页面初始加载时就执行一次 */
     const stored = localStorage.getItem('ao3-block-keywords') || '';
-    if (stored) input.value = stored;
-    doBlock(stored);
+    if (stored) doBlock(stored);
 })();
   })();
