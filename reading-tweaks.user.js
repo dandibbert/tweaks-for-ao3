@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 优化脚本 (移动端/桌面端)
 // @namespace    http://tampermonkey.net/
-// @version      2.2
+// @version      2.4
 // @description  优化AO3阅读和浏览体验。移动端阅读字号放大；在所有作品列表页（搜索、书签、用户主页等）高亮字数和Kudos，并移动到标题旁，字数统一以“万”为单位显示。通过菜单项管理关键词屏蔽。
 // @author       Gemini
 // @match        https://archiveofourown.org/*
