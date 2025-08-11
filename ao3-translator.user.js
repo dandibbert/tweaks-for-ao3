@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译（移动端 Safari / Tampermonkey）
 // @namespace    https://ao3-translate.example
-// @version      0.3.9
+// @version      0.4.9
 // @description  精确tiktoken计数；英→中默认输出≈0.7×输入；最大化单次输入、最小化请求数；首块实测动态校准并对未启动块合包；有序流式不跳动；OpenAI-compatible；流式/非流式；finish_reason智能；红白优雅UI；计划面板显示真实in tokens。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -350,6 +350,8 @@
           biBtn.style.display = 'none';
         } else {
           biBtn.style.display = '';
+          // 启用双语对照按钮（除非正在显示缓存）
+          biBtn.disabled = false;
           if (isAllComplete) {
             biBtn.classList.add('highlight');
           } else {
@@ -677,7 +679,7 @@
       .ao3x-small{font-size:12px;color:var(--c-muted)}
 
       /* 动态字体大小 */
-      .ao3x-translation{font-size:var(--translation-font-size,16px)}
+      .ao3x-translation{font-size:var(--translation-font-size,16px);min-height:60px;transition:min-height 0.2s ease}
 
       /* 引用样式 */
       .ao3x-translation blockquote{
@@ -695,6 +697,7 @@
         padding:12px 16px;margin:12px 0;
         border:1px solid var(--c-border);border-radius:var(--radius);
         background:white;box-shadow:0 1px 3px rgba(0,0,0,.05);
+        min-height:80px;transition:all 0.2s ease;
       }
       .ao3x-pair .orig{color:#374151;line-height:1.6}
       .ao3x-pair .orig blockquote{
@@ -1129,21 +1132,34 @@
       if(!transDiv){
         transDiv=document.createElement('div');
         transDiv.className='ao3x-translation';
+        // 设置最小高度防止容器跳动
+        transDiv.style.minHeight = '60px';
         anchor.insertAdjacentElement('afterend', transDiv);
       }
       const prev = this.lastApplied[i] || '';
       const hasPlaceholder = /\(待译\)/.test(transDiv.textContent || '');
       if (!prev || hasPlaceholder) {
-        transDiv.innerHTML = cleanHtml || '<span class="ao3x-muted">（待译）</span>';
-        this.lastApplied[i] = cleanHtml; return;
+        // 使用 requestAnimationFrame 减少闪烁
+        requestAnimationFrame(() => {
+          transDiv.innerHTML = cleanHtml || '<span class="ao3x-muted">（待译）</span>';
+          this.lastApplied[i] = cleanHtml;
+        });
+        return;
       }
       if (cleanHtml.startsWith(prev)) {
         const tail = cleanHtml.slice(prev.length);
-        if (tail) transDiv.insertAdjacentHTML('beforeend', tail);
+        if (tail) {
+          requestAnimationFrame(() => {
+            transDiv.insertAdjacentHTML('beforeend', tail);
+            this.lastApplied[i] = cleanHtml;
+          });
+        }
       } else {
-        transDiv.innerHTML = cleanHtml;
+        requestAnimationFrame(() => {
+          transDiv.innerHTML = cleanHtml;
+          this.lastApplied[i] = cleanHtml;
+        });
       }
-      this.lastApplied[i] = cleanHtml;
     },
     finalizeCurrent(){
       // Advance rendering pointer and drain any already-finished chunks in order.
@@ -1234,7 +1250,11 @@
         const trans = TransStore.get(idx);
         const pairs = Bilingual.pairByParagraph(orig, trans);
         const html = pairs.map(p => `<div class="ao3x-pair"><div class="orig">${p.orig}</div><div class="trans">${p.trans||'<span class="ao3x-muted">（无对应段落）</span>'}</div></div>`).join('');
-        block.innerHTML = `<span class="ao3x-anchor" data-chunk-id="${idx}"></span>${html}`;
+        
+        // 使用 requestAnimationFrame 减少闪烁
+        requestAnimationFrame(() => {
+          block.innerHTML = `<span class="ao3x-anchor" data-chunk-id="${idx}"></span>${html}`;
+        });
       });
     },
     setBlockTranslation(idx, html){
