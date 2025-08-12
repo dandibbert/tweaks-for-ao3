@@ -3,7 +3,8 @@ Some tweaks for using AO3 on your iPhone. Safari and Userscripts.
 
 ## AO3 全文翻译（移动端 Safari / Tampermonkey）
 
-为 [Archive of Our Own](https://archiveofourown.org/) 的**作品/章节页面**添加一键全文翻译功能。脚本在页面内流式渲染译文，支持断点续传与缓存，无需跳转或复制内容。适配移动端 Safari 与桌面浏览器的 Tampermonkey 环境。
+为 [Archive of Our Own](https://archiveofourown.org/) 的** 作品/章节页面 **添加一键全文翻译功能。脚本在页面内流式渲染译文，支持断点续传与缓存，无需跳转或复制内容。适配移动端 Safari 与桌面浏览器的 Tampermonkey 环境。
+
 ---
 
 ### 功能特性
