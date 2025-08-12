@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译（移动端 Safari / Tampermonkey）
 // @namespace    https://ao3-translate.example
-// @version      0.3.9
+// @version      0.4.9
 // @description  精确tiktoken计数；英→中默认输出≈0.7×输入；最大化单次输入、最小化请求数；首块实测动态校准并对未启动块合包；有序流式不跳动；OpenAI-compatible；流式/非流式；finish_reason智能；红白优雅UI；计划面板显示真实in tokens。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
