@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         AO3 标签预览面板 (优化版) - 稳定长按&防误触
+// @name         AO3 标签预览面板 (优化版) - 稳定长按&防误触&彻底禁菜单
 // @namespace    http://tampermonkey.net/
-// @version      2.5
-// @description  AO3 标签预览面板；“仅长按模式”下点触无动作；正常滑动不被阻塞；点击遮罩可关闭；iOS 幽灵点击规避。
+// @version      2.7
+// @description  AO3 标签预览面板；仅长按模式下点触无动作，长按弹面板；面板打开期间全局禁用右键/长按菜单；点击空白必关；不阻塞滑动；防幽灵点击。
 // @match        https://archiveofourown.org/*
 // @grant        GM_addStyle
 // @grant        GM_registerMenuCommand
@@ -16,15 +16,16 @@
 
   const CONFIG = {
     ui: {
-      swipeThreshold: 8,      // 手指位移阈值(px)
-      scrollThreshold: 2,     // 页面滚动阈值(px)
-      tapMaxDuration: 200,    // 普通模式下点按最大时长(ms)
-      tapConfirmDelay: 90,    // 普通模式 touchend 后延时确认(ms)
-      longPressDuration: 500, // 长按判定时间(ms)
-      ignoreClickWindow: 450, // touchend 后屏蔽 click 的窗口(ms)
+      swipeThreshold: 8,
+      scrollThreshold: 2,
+      tapMaxDuration: 200,
+      tapConfirmDelay: 90,
+      longPressDuration: 500,
+      ignoreClickWindow: 450,
       animationDuration: 220,
       copyHintDuration: 1400,
-      vibrationDuration: 15
+      vibrationDuration: 15,
+      contextGuardWindow: 800 // 面板开启后额外抑制 contextmenu 的时间(ms)
     },
     panel: {
       width: '85%',
@@ -37,9 +38,10 @@
   const state = {
     onlyLongPress: readOnlyLongPress(),
     currentTag: null,
-    scrollLockY: 0,
+    panelOpen: false,
+    suppressContextUntil: 0,
 
-    // 手势
+    scrollLockY: 0,
     startX: 0, startY: 0, startScrollY: 0, startTime: 0,
     moved: false, intentScroll: false,
     longPressTimer: null, longPressFired: false,
@@ -47,10 +49,10 @@
     ignoreClickUntil: 0
   };
 
-  // ---------- Utils ----------
   function supportsTouch() { return 'ontouchstart' in window || (navigator && navigator.maxTouchPoints > 0); }
   function readOnlyLongPress() { try { return localStorage.getItem(STORAGE_KEY) === '1'; } catch { return false; } }
   function writeOnlyLongPress(v){ try { localStorage.setItem(STORAGE_KEY, v ? '1' : '0'); } catch {} }
+
   function isTagLink(el) {
     if (!el || el.tagName !== 'A' || !el.href) return false;
     const href = el.href;
@@ -78,7 +80,6 @@
     return null;
   }
 
-  // ---------- Styles ----------
   GM_addStyle(`
     .ao3-overlay{
       position:fixed!important; inset:0!important; background:rgba(0,0,0,.35)!important;
@@ -93,6 +94,7 @@
       width:${CONFIG.panel.width}!important; max-width:${CONFIG.panel.maxWidth}!important; min-width:${CONFIG.panel.minWidth}!important;
       box-sizing:border-box!important; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif!important;
       display:none!important; opacity:0!important; transition:all ${CONFIG.ui.animationDuration}ms cubic-bezier(.4,0,.2,1)!important;
+      -webkit-touch-callout:none!important;
     }
     .ao3-tag-panel.show{ display:block!important; opacity:1!important; transform:translate(-50%,-50%) scale(1)!important; }
     .ao3-tag-panel .tag-content{
@@ -116,9 +118,15 @@
       transition:opacity .25s ease!important; padding:6px 10px!important; background:#e8f0fe!important; border-radius:4px!important; font-weight:600!important;
     }
     .ao3-tag-panel .copy-hint.show{ opacity:1!important; }
+
+    /* 仅长按模式时，抑制 tag 的系统长按菜单 */
+    .ao3-onlylongpress a[href*="/tags/"],
+    .ao3-onlylongpress a[href*="/works?"]{
+      -webkit-touch-callout: none !important;
+      user-select: none !important;
+    }
   `);
 
-  // ---------- Panel ----------
   const panel = {
     el: null, overlay: null, txt: null, copyBtn: null, openBtn: null, hint: null,
     create(){
@@ -136,14 +144,20 @@
       this.el.appendChild(this.txt); this.el.appendChild(group); this.el.appendChild(this.hint);
       document.body.appendChild(this.overlay); document.body.appendChild(this.el);
 
-      this.overlay.addEventListener('click', () => this.hide(), { passive: true });
+      const close = (ev) => { ev.preventDefault(); ev.stopPropagation(); this.hide(); };
+      // 覆盖层多事件关闭，确保“点击空白必关”
+      this.overlay.addEventListener('click', close, { passive: false });
+      this.overlay.addEventListener('mousedown', close, { passive: false });
+      this.overlay.addEventListener('touchstart', close, { passive: false });
     },
     show(tag){
       state.currentTag = tag;
+      state.panelOpen = true;
+      state.suppressContextUntil = Date.now() + CONFIG.ui.contextGuardWindow;
+
       const text = tag.textContent.trim();
       const link = tag.href;
 
-      // 锁滚动
       state.scrollLockY = window.pageYOffset || document.documentElement.scrollTop || 0;
       document.body.style.overflow = 'hidden';
       document.body.style.position = 'fixed';
@@ -166,7 +180,6 @@
       this.el.classList.remove('show');
       this.overlay.classList.remove('show');
 
-      // 解锁滚动
       document.body.style.overflow = '';
       document.body.style.position = '';
       document.body.style.width = '';
@@ -175,31 +188,55 @@
       window.scrollTo(0, y);
 
       state.currentTag = null;
+      state.panelOpen = false;
     }
   };
   panel.create();
 
-  // ---------- Menu ----------
+  function applyOnlyLongPressCSS() {
+    document.documentElement.classList.toggle('ao3-onlylongpress', state.onlyLongPress);
+  }
+  applyOnlyLongPressCSS();
+
   if (typeof GM_registerMenuCommand === 'function') {
     GM_registerMenuCommand(`切换仅长按模式（当前：${state.onlyLongPress ? '开启' : '关闭'}）`, () => {
       state.onlyLongPress = !state.onlyLongPress;
       writeOnlyLongPress(state.onlyLongPress);
+      applyOnlyLongPressCSS();
       alert(`仅长按模式：${state.onlyLongPress ? '已开启' : '已关闭'}`);
     });
   }
 
-  // ---------- Events ----------
-  // 捕获阶段 click 拦截：仅长按模式下一律阻止对 tag 的点击（双保险 + 阻止导航）
-  document.addEventListener('click', (e) => {
-    // 幽灵点击窗口内的一律拦
-    if (Date.now() < state.ignoreClickUntil) { e.preventDefault(); e.stopPropagation(); return; }
-    if (!state.onlyLongPress) return;
-    const tag = findTagFrom(e.target);
-    if (tag) { e.preventDefault(); e.stopPropagation(); }
+  function openPanelFor(target, stopperEvt) {
+    const tag = findTagFrom(target);
+    if (!tag) return false;
+    stopperEvt?.preventDefault?.();
+    stopperEvt?.stopPropagation?.();
+    panel.show(tag);
+    return true;
+  }
+
+  // —— 关键修复：全局拦截 contextmenu —— //
+  document.addEventListener('contextmenu', (e) => {
+    // 面板打开期间：无条件拦截（解决“面板后紧跟弹菜单”）
+    if (state.panelOpen || Date.now() < state.suppressContextUntil) {
+      e.preventDefault(); e.stopPropagation(); return;
+    }
+    // 仅长按模式下：对 tag 链接拦截，以免长按出系统菜单而非面板
+    if (state.onlyLongPress && findTagFrom(e.target)) {
+      e.preventDefault(); e.stopPropagation(); return;
+    }
   }, true);
 
+  // 捕获阶段 click 拦截（幽灵点击/仅长按下的点击阻断）
+  document.addEventListener('click', (e) => {
+    if (Date.now() < state.ignoreClickUntil) { e.preventDefault(); e.stopPropagation(); return; }
+    if (!state.onlyLongPress) return;
+    if (findTagFrom(e.target)) { e.preventDefault(); e.stopPropagation(); }
+  }, true);
+
+  // —— Touch 流程 —— //
   if (supportsTouch()) {
-    // 不在 touchstart 上阻止默认，避免阻塞滚动
     document.addEventListener('touchstart', (e) => {
       const t = e.touches[0];
       state.startTime = Date.now();
@@ -210,17 +247,11 @@
       if (state.onlyLongPress) {
         clearTimeout(state.longPressTimer);
         state.longPressTimer = setTimeout(() => {
-          // 若仍然按住且没移动/滚动，则触发长按
-          const curTouch = e.touches[0];
-          if (!curTouch || state.moved || state.intentScroll) return;
-          const target = document.elementFromPoint(curTouch.clientX, curTouch.clientY);
-          const tag = findTagFrom(target);
-          if (tag) {
-            // 只有真正要开面板时才阻止默认
-            e.preventDefault();
-            e.stopPropagation();
+          const cur = e.touches[0];
+          if (!cur || state.moved || state.intentScroll) return;
+          const target = document.elementFromPoint(cur.clientX, cur.clientY);
+          if (openPanelFor(target, e)) {
             state.longPressFired = true;
-            panel.show(tag);
           }
         }, CONFIG.ui.longPressDuration);
       }
@@ -242,17 +273,14 @@
       clearTimeout(state.longPressTimer); state.longPressTimer = null;
 
       if (state.onlyLongPress) {
-        // 仅长按模式：若没触发长按，则对 tag 的短按什么都不做且阻止跳转
         if (!state.longPressFired) {
           const touch = e.changedTouches && e.changedTouches[0];
           const target = touch ? document.elementFromPoint(touch.clientX, touch.clientY) : e.target;
-          const tag = findTagFrom(target);
-          if (tag) { e.preventDefault(); e.stopPropagation(); }
+          if (findTagFrom(target)) { e.preventDefault(); e.stopPropagation(); }
         }
         return;
       }
 
-      // 普通模式：严格点按判定 + 延时确认
       const duration = Date.now() - state.startTime;
       if (state.moved || state.intentScroll || duration > CONFIG.ui.tapMaxDuration) return;
 
@@ -264,13 +292,11 @@
       clearTimeout(state.confirmTimer);
       state.confirmTimer = setTimeout(() => {
         const afterY = window.pageYOffset || document.documentElement.scrollTop || 0;
-        if (Math.abs(afterY - endScrollY) > 0) return; // 惯性滚动发生，放弃
-        const tag = findTagFrom(endTarget);
-        if (tag) { e.preventDefault(); e.stopPropagation(); panel.show(tag); }
+        if (Math.abs(afterY - endScrollY) > 0) return;
+        openPanelFor(endTarget, e);
       }, CONFIG.ui.tapConfirmDelay);
     }, { passive: false, capture: true });
   } else {
-    // 桌面端：普通模式点击开面板；仅长按模式下点击无动作
     document.addEventListener('click', (e) => {
       if (Date.now() < state.ignoreClickUntil) { e.preventDefault(); e.stopPropagation(); return; }
       const tag = findTagFrom(e.target);
@@ -282,6 +308,6 @@
 
   // ESC 关闭
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && state.currentTag) panel.hide();
+    if (e.key === 'Escape' && state.panelOpen) panel.hide();
   }, true);
 })();
