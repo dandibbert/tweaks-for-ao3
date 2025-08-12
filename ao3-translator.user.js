@@ -139,19 +139,35 @@
         isLongPress = false;
       };
 
+      // iOS Safari文本选择防护
+      const preventSelection = (e) => {
+        if (e.target.closest('.ao3x-btn')) {
+          e.preventDefault();
+          e.stopPropagation();
+          return false;
+        }
+      };
+
       // 鼠标事件（桌面）
-      btnTranslate.addEventListener('mousedown', startLongPress);
+      btnTranslate.addEventListener('mousedown', (e) => {
+        preventSelection(e);
+        startLongPress();
+      });
       btnTranslate.addEventListener('mouseup', cancelLongPress);
       btnTranslate.addEventListener('mouseleave', cancelLongPress);
 
       // 触摸事件（移动设备）
       btnTranslate.addEventListener('touchstart', (e) => {
+        preventSelection(e);
         startLongPress();
       });
-      btnTranslate.addEventListener('touchend', (e) => {
-        cancelLongPress();
-      });
+      btnTranslate.addEventListener('touchend', cancelLongPress);
       btnTranslate.addEventListener('touchcancel', cancelLongPress);
+
+      // 添加全局文本选择防护
+      document.addEventListener('selectstart', preventSelection);
+      document.addEventListener('mousedown', preventSelection);
+      document.addEventListener('touchstart', preventSelection);
 
       btnTranslate.addEventListener('click', (e) => {
         if (!isLongPress) {
@@ -368,18 +384,29 @@
           isMultiSelectLongPress = false;
         };
 
+        // iOS Safari文本选择防护
+        const preventSelection = (e) => {
+          if (e.target.closest('.ao3x-toolbar-btn')) {
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
+          }
+        };
+
         // 鼠标事件（桌面）
-        biBtn.addEventListener('mousedown', startMultiSelectLongPress);
+        biBtn.addEventListener('mousedown', (e) => {
+          preventSelection(e);
+          startMultiSelectLongPress();
+        });
         biBtn.addEventListener('mouseup', cancelMultiSelectLongPress);
         biBtn.addEventListener('mouseleave', cancelMultiSelectLongPress);
 
         // 触摸事件（移动设备）
         biBtn.addEventListener('touchstart', (e) => {
+          preventSelection(e);
           startMultiSelectLongPress();
         });
-        biBtn.addEventListener('touchend', (e) => {
-          cancelMultiSelectLongPress();
-        });
+        biBtn.addEventListener('touchend', cancelMultiSelectLongPress);
         biBtn.addEventListener('touchcancel', cancelMultiSelectLongPress);
 
         biBtn.addEventListener('click', (e) => {
@@ -2239,31 +2266,173 @@
       const url = URL.createObjectURL(imageBlob);
       const modal = document.createElement('div');
       modal.className = 'ao3x-image-preview-modal';
+      
+      // iOS Safari优化：使用内联样式避免CSS加载问题
+      modal.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.9);
+        z-index: 999999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        -webkit-overflow-scrolling: touch;
+        -webkit-transform: translateZ(0);
+        transform: translateZ(0);
+        opacity: 0;
+        transition: opacity 0.3s ease;
+      `;
+      
       modal.innerHTML = `
-        <div class="ao3x-image-preview-content">
-          <div class="ao3x-image-preview-header">
-            <span>${fileName}</span>
-            <button class="ao3x-image-preview-close" onclick="this.closest('.ao3x-image-preview-modal').remove()">×</button>
+        <div style="
+          background: white;
+          border-radius: 12px;
+          max-width: 90%;
+          max-height: 90%;
+          overflow: hidden;
+          -webkit-overflow-scrolling: touch;
+          -webkit-transform: translateZ(0);
+          transform: translateZ(0);
+          box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        ">
+          <div style="
+            padding: 16px 20px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: white;
+            border-radius: 12px 12px 0 0;
+          ">
+            <span style="font-size: 16px; color: #333; font-weight: 600;">${fileName}</span>
+            <button style="
+              background: none;
+              border: none;
+              font-size: 28px;
+              cursor: pointer;
+              color: #666;
+              padding: 0;
+              width: 40px;
+              height: 40px;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              -webkit-user-select: none;
+              user-select: none;
+              border-radius: 50%;
+              transition: all 0.2s ease;
+            " onclick="this.closest('.ao3x-image-preview-modal').remove()">×</button>
           </div>
-          <div class="ao3x-image-preview-body">
-            <img src="${url}" alt="${fileName}" />
+          <div style="
+            max-height: 70vh;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            background: #f8f9fa;
+          ">
+            <img src="${url}" alt="${fileName}" style="
+              max-width: 100%;
+              height: auto;
+              display: block;
+              -webkit-user-select: none;
+              user-select: none;
+              -webkit-user-drag: none;
+              pointer-events: none;
+              background: white;
+            " />
           </div>
-          <div class="ao3x-image-preview-footer">
-            <button class="ao3x-image-preview-download" onclick="Controller.downloadImage('${url}', '${fileName}')">下载图片</button>
-            <button class="ao3x-image-preview-longpress" onmousedown="Controller.startImageLongPress(this)" ontouchstart="Controller.startImageLongPress(this)">长按保存</button>
+          <div style="
+            padding: 16px 20px;
+            border-top: 1px solid #eee;
+            display: flex;
+            gap: 12px;
+            background: white;
+            border-radius: 0 0 12px 12px;
+          ">
+            <button style="
+              background: #007aff;
+              color: white;
+              border: none;
+              padding: 12px 24px;
+              border-radius: 8px;
+              font-size: 16px;
+              cursor: pointer;
+              -webkit-user-select: none;
+              user-select: none;
+              -webkit-appearance: none;
+              appearance: none;
+              font-weight: 500;
+              transition: all 0.2s ease;
+            " onclick="Controller.downloadImage('${url}', '${fileName}')">下载图片</button>
+            <button style="
+              background: #34c759;
+              color: white;
+              border: none;
+              padding: 12px 24px;
+              border-radius: 8px;
+              font-size: 16px;
+              cursor: pointer;
+              -webkit-user-select: none;
+              user-select: none;
+              -webkit-appearance: none;
+              appearance: none;
+              touch-action: manipulation;
+              font-weight: 500;
+              transition: all 0.2s ease;
+            " onmousedown="Controller.startImageLongPress(this)" ontouchstart="Controller.startImageLongPress(this)">长按保存</button>
           </div>
         </div>
       `;
 
+      // iOS Safari特殊处理：先隐藏，添加到DOM，然后显示
+      modal.style.display = 'none';
       document.body.appendChild(modal);
+      
+      // 强制重绘并显示
+      requestAnimationFrame(() => {
+        modal.style.display = 'flex';
+        
+        // 触发重绘确保iOS Safari正确渲染
+        modal.offsetHeight;
+        modal.style.opacity = '1';
+        
+        // iOS设备特殊处理
+        if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
+          // 强制滚动到顶部
+          setTimeout(() => {
+            modal.scrollTop = 0;
+            const content = modal.querySelector('div[style*="background: white"]');
+            if (content) {
+              content.scrollTop = 0;
+            }
+            
+            // 再次强制重绘
+            modal.style.display = 'none';
+            modal.offsetHeight;
+            modal.style.display = 'flex';
+          }, 50);
+        }
+      });
 
       // 点击背景关闭
       modal.addEventListener('click', (e) => {
         if (e.target === modal) {
-          modal.remove();
-          URL.revokeObjectURL(url);
+          modal.style.opacity = '0';
+          setTimeout(() => {
+            modal.remove();
+            URL.revokeObjectURL(url);
+          }, 300);
         }
       });
+      
+      // iOS Safari特殊处理：阻止默认的缩放和滚动行为
+      modal.addEventListener('touchmove', (e) => {
+        if (e.target === modal) {
+          e.preventDefault();
+        }
+      }, { passive: false });
     },
 
     // 下载图片
@@ -2279,18 +2448,47 @@
 
     // 开始图片长按
     startImageLongPress(button) {
+      // 阻止文本选择和默认行为
+      const preventSelection = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      };
+      
+      // 添加事件监听器阻止文本选择
+      button.addEventListener('selectstart', preventSelection);
+      button.addEventListener('mousedown', preventSelection);
+      button.addEventListener('touchstart', preventSelection);
+      
+      // 为iOS添加额外保护
+      button.style.userSelect = 'none';
+      button.style.webkitUserSelect = 'none';
+      button.style.touchCallout = 'none';
+      button.style.webkitTouchCallout = 'none';
+      button.style.touchAction = 'manipulation';
+      
       let longPressTimer = setTimeout(() => {
         const modal = button.closest('.ao3x-image-preview-modal');
         const img = modal.querySelector('img');
         if (img) {
           const url = img.src;
-          const fileName = modal.querySelector('.ao3x-image-preview-header span').textContent;
+          const fileName = modal.querySelector('div[style*="font-size: 16px"]').textContent;
           this.downloadImage(url, fileName);
         }
       }, 1000);
 
       const cancelLongPress = () => {
         clearTimeout(longPressTimer);
+        // 移除事件监听器
+        button.removeEventListener('selectstart', preventSelection);
+        button.removeEventListener('mousedown', preventSelection);
+        button.removeEventListener('touchstart', preventSelection);
+        // 恢复样式
+        button.style.userSelect = '';
+        button.style.webkitUserSelect = '';
+        button.style.touchCallout = '';
+        button.style.webkitTouchCallout = '';
+        button.style.touchAction = '';
       };
 
       button.addEventListener('mouseup', cancelLongPress);
