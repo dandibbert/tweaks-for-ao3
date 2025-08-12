@@ -1,5 +1,88 @@
 # tweaks-for-ao3
 Some tweaks for using AO3 on your iPhone. Safari and Userscripts.
+
+## AO3 全文翻译（移动端 Safari / Tampermonkey）
+
+为 [Archive of Our Own](https://archiveofourown.org/) 的**作品/章节页面**添加一键全文翻译功能。脚本在页面内流式渲染译文，支持断点续传与缓存，无需跳转或复制内容。适配移动端 Safari 与桌面浏览器的 Tampermonkey 环境。 :contentReference[oaicite:0]{index=0}
+
+---
+
+### 功能特性
+
+- **一键翻译按钮（🌐）**  
+  在作品正文旁以悬浮按钮启动翻译；译文就地渲染，避免页面跳动与闪烁。  
+- **OpenAI-compatible 接口**  
+  自带设置面板（⚙️），可填写 `Base URL / API Path / API Key`，适配任意兼容的 Chat Completions 接口与自托管网关；支持获取模型列表与搜索。  
+- **精细分块与流式输出**  
+  基于估算 token 的**预算规划**，自动切分/合并段落（含 `blockquote` 等块级元素），并发请求、顺序渲染，长文也能平滑输出。  
+- **动态校准**  
+  首块完成后，自动用实测「输出/输入 token 比」校准后续预算，减少请求次数、降低截断。  
+- **失败重试与续传**  
+  工具栏提供「重试未完成」按钮；每段翻译会本地缓存，**刷新后自动加载**（可一键清除）。  
+- **视图切换**  
+  - 仅译文 / 仅原文  
+  - **双语对照**（全部完成后可用）  
+- **可调参数**  
+  并发数、温度、Max Tokens、上下文窗口、流式最小帧间隔、译文字号等均可在面板中修改并持久化。  
+
+---
+
+### 安装
+
+1. 安装浏览器扩展 **Tampermonkey**。  
+2. 新建用户脚本，粘贴本仓库的 `ao3-translator.user.js`。  
+3. 访问任意 AO3 **作品页**或**章节页**（匹配：`/works/*`、`/chapters/*`），页面右侧会出现悬浮按钮。  
+
+> 默认运行时机：`document-idle`；跨域：`@connect *`（用于调用你配置的 API 网关）。 :contentReference[oaicite:1]{index=1}
+
+---
+
+### 使用
+
+1. 点击 **⚙️ 设置**：  
+   - 填写 **Base URL**（如 `https://your-gateway/v1/...`）、**API Path**（如 `v1/chat/completions`，若 Base 已含 `/v1` 可留空）、**API Key**。  
+   - 选择或输入 **模型名称**；可「获取列表」并搜索筛选。  
+   - 需要时调整并发、温度、Max Tokens、译文字号等。  
+2. 点击 **🌐 翻译**：  
+   - 脚本会规划切块，顶部工具栏显示进度与可用操作。  
+   - 输出为**HTML 片段**，保留原页面结构与行内格式。  
+3. 顶部工具栏：  
+   - 视图切换：仅译文 / 仅原文 /（完成后）双语对照  
+   - **清除缓存**、**重试未完成**（仅有失败段时出现）  
+
+---
+
+### 实现要点
+
+- **Token 估算器（本地启发式）**：避免外部依赖；结合上下文窗口、Max Tokens、保留预算（Reserve）等生成**最大化单次输入**的切块计划。  
+- **流式 / 非流式均支持**：SSE 增量处理，按顺序输出到对应块，确保光标/滚动位置稳定。  
+- **「思考内容」过滤**：对带 `<thinking>`/`<think>` 等痕迹的模型输出进行清洗，仅保留可见译文。  
+- **本地缓存**：以页面路径为键存储每段译文与完成标记；刷新自动装载，可随时清除。 :contentReference[oaicite:2]{index=2}
+
+---
+
+### 兼容性
+
+- 浏览器：移动端 Safari、任意桌面浏览器（需安装 Tampermonkey）。  
+- 页面匹配：  
+  - `https://archiveofourown.org/works/*`  
+  - `https://archiveofourown.org/chapters/*`  
+- 权限与运行：`@run-at document-idle`，`@connect *`，`GM_*` 存取配置与样式注入。 :contentReference[oaicite:3]{index=3}
+
+---
+
+### 隐私与费用
+
+- 所有翻译请求**直接发送**到你配置的 API 网关/服务；本脚本不上传数据到第三方。  
+- 费用与速率取决于你所使用的模型与服务商；可在设置面板调低温度/并发/Max Tokens 控制成本。  
+
+---
+
+### 许可证
+
+MIT
+
+
 ## tag-preview.user.js：AO3 标签预览面板（Tampermonkey 脚本）
 
 这是一个适用于 [Archive of Our Own](https://archiveofourown.org/)（AO3）的 Tampermonkey 用户脚本，点击或长按标签即可在当前页面弹出预览面板，无需跳转。
