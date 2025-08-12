@@ -121,11 +121,11 @@
       wrap.className = 'ao3x-fab-wrap';
       const btnTranslate = document.createElement('button'); btnTranslate.className = 'ao3x-btn'; btnTranslate.textContent = '🌐';
       const btnMain = document.createElement('button'); btnMain.className = 'ao3x-btn'; btnMain.textContent = '⚙️';
-      
+
       // 添加长按下载功能
       let longPressTimer = null;
       let isLongPress = false;
-      
+
       const startLongPress = () => {
         isLongPress = false;
         longPressTimer = setTimeout(() => {
@@ -133,33 +133,32 @@
           Controller.downloadTranslation();
         }, 1000); // 1秒长按
       };
-      
+
       const cancelLongPress = () => {
         clearTimeout(longPressTimer);
+        isLongPress = false;
       };
-      
+
       // 鼠标事件（桌面）
       btnTranslate.addEventListener('mousedown', startLongPress);
       btnTranslate.addEventListener('mouseup', cancelLongPress);
       btnTranslate.addEventListener('mouseleave', cancelLongPress);
-      
+
       // 触摸事件（移动设备）
       btnTranslate.addEventListener('touchstart', (e) => {
-        e.preventDefault();
         startLongPress();
       });
       btnTranslate.addEventListener('touchend', (e) => {
-        e.preventDefault();
         cancelLongPress();
       });
       btnTranslate.addEventListener('touchcancel', cancelLongPress);
-      
+
       btnTranslate.addEventListener('click', (e) => {
         if (!isLongPress) {
           Controller.startTranslate();
         }
       });
-      
+
       btnMain.addEventListener('click', () => UI.openPanel());
       wrap.appendChild(btnTranslate); wrap.appendChild(btnMain); document.body.appendChild(wrap);
       UI.buildPanel(); UI.buildToolbar(); UI.ensureToast();
@@ -331,7 +330,7 @@
         const btn = e.target.closest('button'); if (!btn) return;
         const action = btn.getAttribute('data-action');
         if (action === 'retry') { Controller.retryIncomplete(); return; }
-        if (action === 'clear-cache') { 
+        if (action === 'clear-cache') {
           if (confirm('确定要清除当前页面的翻译缓存吗？')) {
             TransStore.clearCache();
             View.setShowingCache(false);
@@ -344,11 +343,61 @@
             }
             UI.hideToolbar();
           }
-          return; 
+          return;
         }
         [...bar.querySelectorAll('button')].forEach(b => { if (!b.getAttribute('data-action')) b.classList.remove('active', 'highlight'); });
         if (!action && !btn.disabled) { btn.classList.add('active'); View.setMode(btn.getAttribute('data-mode')); }
       });
+
+      // 添加双语对照按钮的长按多选功能
+      const biBtn = bar.querySelector('[data-mode="bi"]');
+      if (biBtn) {
+        let multiSelectLongPressTimer = null;
+        let isMultiSelectLongPress = false;
+
+        const startMultiSelectLongPress = () => {
+          isMultiSelectLongPress = false;
+          multiSelectLongPressTimer = setTimeout(() => {
+            isMultiSelectLongPress = true;
+            Controller.enterMultiSelectMode();
+          }, 1000); // 1秒长按
+        };
+
+        const cancelMultiSelectLongPress = () => {
+          clearTimeout(multiSelectLongPressTimer);
+          isMultiSelectLongPress = false;
+        };
+
+        // 鼠标事件（桌面）
+        biBtn.addEventListener('mousedown', startMultiSelectLongPress);
+        biBtn.addEventListener('mouseup', cancelMultiSelectLongPress);
+        biBtn.addEventListener('mouseleave', cancelMultiSelectLongPress);
+
+        // 触摸事件（移动设备）
+        biBtn.addEventListener('touchstart', (e) => {
+          startMultiSelectLongPress();
+        });
+        biBtn.addEventListener('touchend', (e) => {
+          cancelMultiSelectLongPress();
+        });
+        biBtn.addEventListener('touchcancel', cancelMultiSelectLongPress);
+
+        biBtn.addEventListener('click', (e) => {
+          // 如果是多选模式，退出多选模式
+          if (Controller.isInMultiSelectMode()) {
+            Controller.exitMultiSelectMode();
+            return;
+          }
+
+          // 正常的翻译按钮点击功能
+          const action = biBtn.getAttribute('data-action');
+          if (!action && !biBtn.disabled) {
+            [...bar.querySelectorAll('button')].forEach(b => { if (!b.getAttribute('data-action')) b.classList.remove('active', 'highlight'); });
+            biBtn.classList.add('active');
+            View.setMode(biBtn.getAttribute('data-mode'));
+          }
+        });
+      }
       document.body.appendChild(bar); UI._toolbar = bar;
     },
     showToolbar() { UI._toolbar.style.display = 'flex'; },
@@ -382,7 +431,7 @@
       if (biBtn) {
         const isAllComplete = TransStore.allDone(RenderState.total || 0) && (RenderState.total || 0) > 0;
         const isShowingCache = View.isShowingCache();
-        
+
         // 如果正在显示缓存，隐藏双语对照按钮
         if (isShowingCache) {
           biBtn.style.display = 'none';
@@ -784,6 +833,130 @@
         background:var(--c-soft);padding:4px 8px;
         border-radius:6px;color:var(--c-muted);
       }
+
+
+      /* 对照块勾选框 */
+      .ao3x-multiselect-label{
+        position:absolute;left:50%;top:50%;transform:translate(-50%, -50%);
+        cursor:pointer;z-index:10;
+        background:white;padding:4px;border-radius:4px;
+        box-shadow:0 2px 4px rgba(0,0,0,0.1);
+      }
+      .ao3x-multiselect-checkbox{
+        width:18px;height:18px;cursor:pointer;
+        accent-color:var(--c-accent);
+      }
+      .ao3x-pair{
+        position:relative; /* 为绝对定位的勾选框提供参考 */
+      }
+      .ao3x-pair:hover{
+        background:var(--c-soft);
+      }
+      .ao3x-pair.selected{
+        background:rgba(179,0,0,.05);
+        border-color:var(--c-accent);
+      }
+
+      /* 浮动保存按钮 */
+      .ao3x-multiselect-save{
+        position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+        z-index:999999;background:var(--c-accent);color:white;
+        border:none;padding:12px 24px;border-radius:var(--radius-full);
+        font-size:14px;font-weight:500;cursor:pointer;
+        box-shadow:0 4px 12px rgba(179,0,0,.25);
+        transition:all .2s;pointer-events:auto;user-select:none;
+        -webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;
+      }
+      .ao3x-multiselect-save:hover{
+        background:#9a0000;transform:translateX(-50%) translateY(-2px);
+        box-shadow:0 6px 16px rgba(179,0,0,.35);
+      }
+      .ao3x-multiselect-save:active{
+        transform:translateX(-50%) translateY(0);
+      }
+
+      /* 图片预览模态框 */
+      .ao3x-image-preview-modal{
+        position:fixed;inset:0;background:rgba(0,0,0,.8);
+        z-index:100001;display:flex;align-items:center;
+        justify-content:center;padding:20px;
+        backdrop-filter:blur(4px);
+      }
+      .ao3x-image-preview-content{
+        background:white;border-radius:var(--radius);
+        max-width:90vw;max-height:90vh;overflow:hidden;
+        box-shadow:0 8px 32px rgba(0,0,0,.3);
+        display:flex;flex-direction:column;
+      }
+      .ao3x-image-preview-header{
+        display:flex;align-items:center;justify-content:space-between;
+        padding:16px 20px;border-bottom:1px solid var(--c-border);
+        background:var(--c-soft);
+      }
+      .ao3x-image-preview-header span{
+        font-size:16px;font-weight:600;color:var(--c-fg);
+      }
+      .ao3x-image-preview-close{
+        background:transparent;border:none;
+        color:var(--c-muted);width:32px;height:32px;
+        border-radius:var(--radius-full);font-size:20px;
+        line-height:1;cursor:pointer;transition:all .2s;
+      }
+      .ao3x-image-preview-close:hover{
+        background:var(--c-accent);color:white;
+      }
+      .ao3x-image-preview-body{
+        padding:20px;overflow:auto;
+        display:flex;align-items:center;justify-content:center;
+      }
+      .ao3x-image-preview-body img{
+        max-width:100%;max-height:60vh;
+        border-radius:var(--radius);box-shadow:0 2px 8px rgba(0,0,0,.1);
+      }
+      .ao3x-image-preview-footer{
+        display:flex;gap:12px;padding:16px 20px;
+        border-top:1px solid var(--c-border);
+        background:var(--c-soft);
+      }
+      .ao3x-image-preview-download,
+      .ao3x-image-preview-longpress{
+        flex:1;padding:10px 16px;border-radius:var(--radius-full);
+        border:none;font-size:14px;font-weight:500;cursor:pointer;
+        transition:all .2s;
+      }
+      .ao3x-image-preview-download{
+        background:var(--c-accent);color:white;
+      }
+      .ao3x-image-preview-download:hover{
+        background:#9a0000;
+      }
+      .ao3x-image-preview-longpress{
+        background:var(--c-border);color:var(--c-fg);
+      }
+      .ao3x-image-preview-longpress:hover{
+        background:var(--c-muted);color:white;
+      }
+
+      /* 移动端优化 */
+      @media (max-width:768px){
+        .ao3x-multiselect-ui{
+          top:8px;left:12px;right:12px;transform:none;
+          padding:10px 16px;font-size:13px;
+        }
+        .ao3x-multiselect-save{
+          bottom:16px;left:12px;right:12px;transform:none;
+          padding:14px 20px;
+        }
+        .ao3x-image-preview-content{
+          max-width:95vw;max-height:95vh;
+        }
+        .ao3x-image-preview-body{
+          padding:16px;
+        }
+        .ao3x-image-preview-footer{
+          flex-direction:column;gap:8px;
+        }
+      }
     `);
   }
   function debounce(fn, wait){ let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), wait); }; }
@@ -898,22 +1071,22 @@
     return plan.map((p,i)=>({index:i, html:p.html, text:p.text, inTok:p.inTok}));
   }
   function segmentSentencesFromHTML(html){
-    const tmp=document.createElement('div'); tmp.innerHTML=html; const parts=[]; 
+    const tmp=document.createElement('div'); tmp.innerHTML=html; const parts=[];
     // 处理块级元素，包括blockquote在内的所有块级元素
     const blocks=$all('p, div, li, pre, blockquote', tmp);
-    
-    if(!blocks.length){ 
-      parts.push(html); 
-      return parts; 
+
+    if(!blocks.length){
+      parts.push(html);
+      return parts;
     }
-    
+
     // 处理所有块级元素，包括blockquote
     for(const b of blocks) {
       // 检查是否在其他块级元素内部，避免重复处理
       if(b.closest('p, div, li, pre, blockquote') && !b.parentElement?.isEqualNode(tmp)) continue;
       parts.push(b.outerHTML);
     }
-    
+
     return parts;
   }
 
@@ -1049,13 +1222,13 @@
   const TransStore = {
     _map: Object.create(null), _done: Object.create(null),
     _cacheKey: null,
-    
+
     // 初始化缓存键（基于当前URL）
     initCache() {
       this._cacheKey = `ao3_translator_${window.location.pathname}`;
       this.loadFromCache();
     },
-    
+
     // 从localStorage加载缓存
     loadFromCache() {
       if (!this._cacheKey) return;
@@ -1070,7 +1243,7 @@
         console.warn('Failed to load translation cache:', e);
       }
     },
-    
+
     // 保存到localStorage
     saveToCache() {
       if (!this._cacheKey) return;
@@ -1085,7 +1258,7 @@
         console.warn('Failed to save translation cache:', e);
       }
     },
-    
+
     // 清除缓存
     clearCache() {
       if (this._cacheKey) {
@@ -1093,7 +1266,7 @@
       }
       this.clear();
     },
-    
+
     // 检查是否有缓存
     hasCache() {
       if (!this._cacheKey) return false;
@@ -1109,7 +1282,7 @@
         return false;
       }
     },
-    
+
     // 获取缓存信息
     getCacheInfo() {
       if (!this._cacheKey) return { hasCache: false, total: 0, completed: 0 };
@@ -1128,27 +1301,27 @@
         return { hasCache: false, total: 0, completed: 0 };
       }
     },
-    
-    set(i, html){ 
-      this._map[i] = html; 
+
+    set(i, html){
+      this._map[i] = html;
       this.saveToCache(); // 自动保存
-    }, 
-    
-    get(i){ return this._map[i] || ''; },
-    
-    markDone(i){ 
-      this._done[i] = true; 
-      this.saveToCache(); // 自动保存
-    }, 
-    
-    allDone(total){ 
-      for(let k=0;k<total;k++){ if(!this._done[k]) return false; } 
-      return true; 
     },
-    
-    clear(){ 
-      this._map = Object.create(null); 
-      this._done = Object.create(null); 
+
+    get(i){ return this._map[i] || ''; },
+
+    markDone(i){
+      this._done[i] = true;
+      this.saveToCache(); // 自动保存
+    },
+
+    allDone(total){
+      for(let k=0;k<total;k++){ if(!this._done[k]) return false; }
+      return true;
+    },
+
+    clear(){
+      this._map = Object.create(null);
+      this._done = Object.create(null);
     }
   };
 
@@ -1219,23 +1392,23 @@
     ensure(){ return ensureRenderContainer(); },
     info(msg){ let n=$('#ao3x-info'); if(!n){ n=document.createElement('div'); n.id='ao3x-info'; n.className='ao3x-small'; this.ensure().prepend(n); } n.textContent=msg; },
     clearInfo(){ const n=$('#ao3x-info'); if(n) n.remove(); },
-    
+
     // 检查是否正在显示缓存
     isShowingCache() {
       return this._isShowingCache;
     },
-    
+
     // 设置是否正在显示缓存
     setShowingCache(showing) {
       this._isShowingCache = showing;
     },
-    setMode(m){ 
+    setMode(m){
       // 只在显示缓存时禁用双语对照模式
       if (m === 'bi' && this.isShowingCache()) {
         m = 'trans'; // 强制切换到译文模式
         UI.toast('显示缓存时双语对照功能已禁用');
       }
-      this.mode=m; this.applyHostVisibility(); this.refresh(true); 
+      this.mode=m; this.applyHostVisibility(); this.refresh(true);
     },
     applyHostVisibility(){ const container = this.ensure(); if(this.mode==='trans' || this.mode==='bi'){ SelectedNodes.forEach(n=> n.style.display='none'); container.style.display=''; } else { SelectedNodes.forEach(n=> n.style.display=''); container.style.display='none'; } },
     refresh(initial=false){
@@ -1281,7 +1454,7 @@
         const trans = TransStore.get(idx);
         const pairs = Bilingual.pairByParagraph(orig, trans);
         const html = pairs.map(p => `<div class="ao3x-pair"><div class="orig">${p.orig}</div><div class="trans">${p.trans||'<span class="ao3x-muted">（无对应段落）</span>'}</div></div>`).join('');
-        
+
         // 使用 requestAnimationFrame 减少闪烁
         requestAnimationFrame(() => {
           block.innerHTML = `<span class="ao3x-anchor" data-chunk-id="${idx}"></span>${html}`;
@@ -1294,7 +1467,7 @@
         RenderState.applyIncremental(Number(idx), html);
       }
       // 只在显示缓存时禁用双语对照功能
-      if(this.mode==='bi' && Bilingual.canRender() && this.isShowingCache()){ 
+      if(this.mode==='bi' && Bilingual.canRender() && this.isShowingCache()){
         this.mode = 'trans';
         UI.toast('显示缓存时双语对照功能已禁用');
         this.refresh(true);
@@ -1307,17 +1480,17 @@
     splitParagraphs(html){
       const div = document.createElement('div'); div.innerHTML = html; const out = [];
       // 处理所有块级元素，包括blockquote
-      div.querySelectorAll('p, div, li, pre, blockquote').forEach(el=>{ 
-        const text=(el.textContent||'').trim(); 
-        if(!text) return; 
+      div.querySelectorAll('p, div, li, pre, blockquote').forEach(el=>{
+        const text=(el.textContent||'').trim();
+        if(!text) return;
         // 检查是否在其他块级元素内部，避免重复处理
         if(el.closest('p, div, li, pre, blockquote') && !el.parentElement?.isEqualNode(div)) return;
-        out.push(el.outerHTML); 
+        out.push(el.outerHTML);
       });
-      
-      if(!out.length){ 
-        const raw=(div.innerHTML||'').split(/<br\s*\/?>/i).map(x=>x.trim()).filter(Boolean); 
-        return raw.map(x=>`<p>${x}</p>`); 
+
+      if(!out.length){
+        const raw=(div.innerHTML||'').split(/<br\s*\/?>/i).map(x=>x.trim()).filter(Boolean);
+        return raw.map(x=>`<p>${x}</p>`);
       }
       return out;
     },
@@ -1383,23 +1556,766 @@
 
   /* ================= Controller ================= */
   const Controller = {
+    // 多选模式状态
+    _multiSelectMode: false,
+    _selectedBlocks: new Set(),
+    _multiSelectUI: null,
+
+    // 检查是否处于多选模式
+    isInMultiSelectMode() {
+      return this._multiSelectMode;
+    },
+
+    // 进入多选模式
+    enterMultiSelectMode() {
+      if (this._multiSelectMode) return;
+
+      // 确保当前是双语对照模式
+      if (View.mode !== 'bi') {
+        View.setMode('bi');
+      }
+
+      this._multiSelectMode = true;
+      this._selectedBlocks.clear();
+
+      // 更新按钮文本
+      this.updateBiButtonText();
+
+      // 为每个对照块添加勾选框
+      this.addCheckboxesToPairs();
+
+      // 显示浮动保存按钮
+      this.showFloatingSaveButton();
+
+      UI.toast('已进入多选模式，选择要保存的对照块');
+    },
+
+    // 退出多选模式
+    exitMultiSelectMode() {
+      if (!this._multiSelectMode) return;
+
+      this._multiSelectMode = false;
+      this._selectedBlocks.clear();
+
+      // 更新按钮文本
+      this.updateBiButtonText();
+
+      // 移除勾选框
+      this.removeCheckboxesFromPairs();
+
+      // 隐藏浮动保存按钮
+      this.hideFloatingSaveButton();
+
+      // 移除多选UI
+      if (this._multiSelectUI) {
+        this._multiSelectUI.remove();
+        this._multiSelectUI = null;
+      }
+
+      UI.toast('已退出多选模式');
+    },
+
+    // 更新双语按钮文本
+    updateBiButtonText() {
+      const biBtn = document.querySelector('[data-mode="bi"]');
+      if (biBtn) {
+        if (this._multiSelectMode) {
+          biBtn.textContent = '多选模式';
+          biBtn.classList.add('highlight');
+        } else {
+          biBtn.textContent = '双语对照';
+          biBtn.classList.remove('highlight');
+        }
+      }
+    },
+
+    // 为对照块添加勾选框
+    addCheckboxesToPairs() {
+      const pairs = document.querySelectorAll('.ao3x-pair');
+      pairs.forEach((pair, arrayIndex) => {
+        // 使用数组索引作为唯一标识符，而不是块的data-index
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'ao3x-multiselect-checkbox';
+        checkbox.dataset.blockIndex = String(arrayIndex);
+
+        const label = document.createElement('label');
+        label.className = 'ao3x-multiselect-label';
+        label.appendChild(checkbox);
+
+        pair.appendChild(label);
+
+        // 添加点击事件
+        checkbox.addEventListener('change', (e) => {
+          const pairIndex = String(arrayIndex);
+          console.log(`勾选框状态改变: pairIndex=${pairIndex}, checked=${e.target.checked}`);
+          if (e.target.checked) {
+            this._selectedBlocks.add(pairIndex);
+          } else {
+            this._selectedBlocks.delete(pairIndex);
+          }
+          console.log('当前选中的块:', Array.from(this._selectedBlocks));
+          this.updateFloatingSaveButton();
+        });
+
+        // 为整个对照块添加点击事件，但排除浮动保存按钮
+        pair.addEventListener('click', (e) => {
+          // 检查点击事件是否来自浮动保存按钮或其子元素
+          const saveButton = document.getElementById('ao3x-multiselect-save');
+          if (saveButton && (saveButton.contains(e.target) || e.target.closest('#ao3x-multiselect-save'))) {
+            return;
+          }
+          
+          if (e.target.type !== 'checkbox') {
+            checkbox.checked = !checkbox.checked;
+            checkbox.dispatchEvent(new Event('change'));
+          }
+        });
+      });
+    },
+
+    // 移除对照块的勾选框
+    removeCheckboxesFromPairs() {
+      const checkboxes = document.querySelectorAll('.ao3x-multiselect-checkbox');
+      const labels = document.querySelectorAll('.ao3x-multiselect-label');
+      checkboxes.forEach(cb => cb.remove());
+      labels.forEach(label => label.remove());
+    },
+
+    // 显示浮动保存按钮
+    showFloatingSaveButton() {
+      const button = document.createElement('button');
+      button.id = 'ao3x-multiselect-save';
+      button.className = 'ao3x-multiselect-save';
+      button.textContent = '保存选中部分';
+      button.style.display = 'none';
+
+      // 阻止事件冒泡但保持按钮功能
+      button.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.saveSelectedBlocksAsImages();
+      });
+      
+      // 阻止其他事件的冒泡
+      ['mousedown', 'mouseup', 'touchstart', 'touchend'].forEach(eventType => {
+        button.addEventListener(eventType, (e) => {
+          e.stopPropagation();
+        });
+      });
+
+      document.body.appendChild(button);
+    },
+
+    // 隐藏浮动保存按钮
+    hideFloatingSaveButton() {
+      const button = document.getElementById('ao3x-multiselect-save');
+      if (button) {
+        button.remove();
+      }
+    },
+
+    // 更新浮动保存按钮状态
+    updateFloatingSaveButton() {
+      const button = document.getElementById('ao3x-multiselect-save');
+      if (button) {
+        button.style.display = this._selectedBlocks.size > 0 ? 'block' : 'none';
+        button.textContent = `保存选中部分 (${this._selectedBlocks.size})`;
+      }
+    },
+
+    // 保存选中块为图片
+    async saveSelectedBlocksAsImages() {
+      if (this._selectedBlocks.size === 0) {
+        UI.toast('请先选择要保存的对照块');
+        return;
+      }
+
+      // 调试信息：查看所有可用的块和对照块
+      const allBlocks = document.querySelectorAll('.ao3x-block');
+      console.log('页面上所有可用的块:', Array.from(allBlocks).map(block => ({
+        index: block.getAttribute('data-index'),
+        hasPair: !!block.querySelector('.ao3x-pair')
+      })));
+      
+      // 调试信息：查看所有可用的对照块
+      const allPairs = document.querySelectorAll('.ao3x-pair');
+      console.log('页面上所有可用的对照块:', Array.from(allPairs).map(pair => ({
+        blockIndex: pair.querySelector('input[data-block-index]')?.getAttribute('data-block-index'),
+        hasContent: !!pair.querySelector('.orig') && !!pair.querySelector('.trans')
+      })));
+
+      // 修复查找逻辑：使用数组索引查找对照块
+      const selectedPairs = Array.from(this._selectedBlocks).map(pairIndex => {
+        // 查找带有指定data-block-index的对照块
+        const pair = document.querySelector(`.ao3x-pair input[data-block-index="${pairIndex}"]`)?.closest('.ao3x-pair');
+        console.log(`查找对照块索引 ${pairIndex}:`, {
+          pairFound: !!pair,
+          pair: pair,
+          pairIndex: pairIndex
+        });
+        return pair;
+      }).filter(pair => pair !== null);
+
+      console.log('选中的对照块:', {
+        selectedBlocks: Array.from(this._selectedBlocks),
+        foundPairs: selectedPairs.length,
+        pairs: selectedPairs
+      });
+
+      if (selectedPairs.length === 0) {
+        UI.toast('未找到选中的对照块');
+        return;
+      }
+
+      UI.toast('正在生成长图...');
+
+      try {
+        // 将多个对照块合并为一张长图
+        const imageData = await this.renderSelectedPairsAsLongImage(selectedPairs);
+        if (imageData) {
+          this.showImagePreview(imageData, `对照块长图_${selectedPairs.length}段`);
+          UI.toast('长图生成成功');
+        }
+      } catch (error) {
+        console.error('生成图片失败:', error);
+        UI.toast('生成图片失败，请重试');
+      }
+    },
+
+    // 将多个对照块渲染为长图
+    async renderSelectedPairsAsLongImage(selectedPairs) {
+      const TAKE = 10;
+      const MAX_WIDTH = 1080;
+      const PADDING = 12;
+      const BG_COLOR = '#ffffff';
+
+      const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+      const loadImage = (url) => new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.crossOrigin = 'anonymous';
+        img.src = url;
+      });
+
+      // 确保html-to-image库已加载
+      await this.ensureHtmlToImageLoaded();
+
+      if (document.fonts && document.fonts.ready) {
+        try { await Promise.race([document.fonts.ready, sleep(1200)]); } catch {}
+      }
+
+      const nodes = selectedPairs.slice(0, TAKE);
+      if (!nodes.length) { throw new Error('没有选中的对照块'); }
+
+      const dpr = Math.min(window.devicePixelRatio || 1, 3);
+      const images = [];
+
+      for (let i = 0; i < nodes.length; i++) {
+        const node = nodes[i];
+        
+        // 临时隐藏多选框和边框
+        const checkbox = node.querySelector('.ao3x-multiselect-checkbox');
+        const label = node.querySelector('.ao3x-multiselect-label');
+        const originalCheckboxDisplay = checkbox ? checkbox.style.display : null;
+        const originalLabelDisplay = label ? label.style.display : null;
+        
+        if (checkbox) checkbox.style.display = 'none';
+        if (label) label.style.display = 'none';
+        
+        // 临时移除边框
+        const originalBorder = node.style.border;
+        const originalBorderRadius = node.style.borderRadius;
+        node.style.border = 'none';
+        node.style.borderRadius = '0';
+        
+        // 直接使用原始节点，参考简化脚本
+        const rect = node.getBoundingClientRect();
+        const width = Math.ceil(rect.width);
+        const pixelRatio = Math.min((MAX_WIDTH / width) || dpr, dpr);
+        
+        console.log('处理节点:', {
+          index: i,
+          width: width,
+          height: rect.height,
+          pixelRatio: pixelRatio
+        });
+
+        // 获取html-to-image库
+        const htmlToImageLib = this.getHtmlToImageLib();
+        if (!htmlToImageLib || !htmlToImageLib.toPng) {
+          // 恢复多选框显示和边框
+          if (checkbox) checkbox.style.display = originalCheckboxDisplay;
+          if (label) label.style.display = originalLabelDisplay;
+          node.style.border = originalBorder;
+          node.style.borderRadius = originalBorderRadius;
+          throw new Error('html-to-image库未正确加载');
+        }
+        
+        try {
+          // 简化调用，直接对原始节点截图
+          const dataUrl = await htmlToImageLib.toPng(node, {
+            backgroundColor: BG_COLOR,
+            pixelRatio,
+            cacheBust: true,
+            style: { 
+              width: width + 'px'
+            }
+          });
+          
+          console.log(`节点 ${i} 图片生成成功，dataUrl长度:`, dataUrl.length);
+          
+          const img = await loadImage(dataUrl);
+          images.push(img);
+        } finally {
+          // 恢复多选框显示和边框
+          if (checkbox) checkbox.style.display = originalCheckboxDisplay;
+          if (label) label.style.display = originalLabelDisplay;
+          node.style.border = originalBorder;
+          node.style.borderRadius = originalBorderRadius;
+        }
+        
+        await sleep(50);
+      }
+
+      const rawMaxWidth = Math.max(...images.map(img => img.width));
+      const canvasWidth = Math.min(rawMaxWidth, MAX_WIDTH);
+      let totalHeight = 0;
+      const scaled = images.map(img => {
+        const scale = canvasWidth / img.width;
+        const w = Math.round(img.width * scale);
+        const h = Math.round(img.height * scale);
+        totalHeight += h;
+        return { img, w, h };
+      });
+      totalHeight += PADDING * Math.max(0, scaled.length - 1);
+
+      const canvas = document.createElement('canvas');
+      canvas.width = canvasWidth;
+      canvas.height = totalHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingEnabled = true;
+      ctx.fillStyle = BG_COLOR;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      let y = 0;
+      for (const s of scaled) {
+        ctx.drawImage(s.img, 0, y, s.w, s.h);
+        y += s.h + PADDING;
+      }
+
+      return new Promise(resolve => {
+        canvas.toBlob(blob => {
+          resolve(blob);
+        }, 'image/png');
+      });
+    },
+
+    // 确保html-to-image库已加载
+    async ensureHtmlToImageLoaded() {
+      console.log('检查html-to-image库加载状态...');
+      
+      // 检查是否已有可用的toPng函数
+      if (this.getHtmlToImageLib()) {
+        console.log('html-to-image库已加载');
+        return;
+      }
+
+      return new Promise((resolve, reject) => {
+        console.log('开始加载html-to-image库...');
+        
+        // 使用页面上下文注入脚本
+        const scriptContent = `
+          (function() {
+            if (window.htmlToImage) {
+              console.log('html-to-image库已存在');
+              return;
+            }
+            
+            var script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.min.js';
+            script.onload = function() {
+              console.log('html-to-image库加载完成');
+              console.log('window.htmlToImage:', typeof window.htmlToImage);
+              console.log('window.htmlToImage.toPng:', typeof window.htmlToImage?.toPng);
+              
+              if (window.htmlToImage && window.htmlToImage.toPng) {
+                console.log('✓ html-to-image库加载成功');
+                
+                // 尝试将库暴露给userscript上下文
+                try {
+                  // 为Tampermonkey创建一个全局引用
+                  if (typeof GM_setValue !== 'undefined') {
+                    // Tampermonkey环境
+                    window.htmlToImageLib = window.htmlToImage;
+                  }
+                } catch (e) {
+                  console.log('无法为Tampermonkey暴露库:', e);
+                }
+                
+                // 通过自定义事件通知
+                document.dispatchEvent(new CustomEvent('htmlToImageLoaded', {
+                  detail: { library: window.htmlToImage }
+                }));
+              } else {
+                console.error('✗ html-to-image库加载失败');
+                document.dispatchEvent(new CustomEvent('htmlToImageLoadFailed'));
+              }
+            };
+            script.onerror = function() {
+              console.error('html-to-image库脚本加载失败');
+              document.dispatchEvent(new CustomEvent('htmlToImageLoadFailed'));
+            };
+            document.head.appendChild(script);
+          })();
+        `;
+        
+        const script = document.createElement('script');
+        script.textContent = scriptContent;
+        document.head.appendChild(script);
+        
+        // 监听加载完成事件
+        const handleLoadSuccess = (event) => {
+          document.removeEventListener('htmlToImageLoaded', handleLoadSuccess);
+          document.removeEventListener('htmlToImageLoadFailed', handleLoadFailed);
+          
+          // 如果事件详情中有库引用，尝试保存它
+          if (event.detail && event.detail.library) {
+            console.log('从事件详情中获取库引用');
+            // 在userscript上下文中保存库引用
+            try {
+              window.htmlToImageLib = event.detail.library;
+            } catch (e) {
+              console.log('无法保存库引用:', e);
+            }
+          }
+          
+          resolve();
+        };
+        
+        const handleLoadFailed = () => {
+          document.removeEventListener('htmlToImageLoaded', handleLoadSuccess);
+          document.removeEventListener('htmlToImageLoadFailed', handleLoadFailed);
+          reject(new Error('html-to-image库加载失败'));
+        };
+        
+        document.addEventListener('htmlToImageLoaded', handleLoadSuccess);
+        document.addEventListener('htmlToImageLoadFailed', handleLoadFailed);
+        
+        // 超时处理
+        const self = this;
+        setTimeout(() => {
+          document.removeEventListener('htmlToImageLoaded', handleLoadSuccess);
+          document.removeEventListener('htmlToImageLoadFailed', handleLoadFailed);
+          if (!self.getHtmlToImageLib()) {
+            reject(new Error('html-to-image库加载超时'));
+          }
+        }, 10000);
+      });
+    },
+
+    // 获取html-to-image库
+    getHtmlToImageLib() {
+      // 首先尝试通过unsafeWindow访问（如果可用）
+      try {
+        if (typeof unsafeWindow !== 'undefined' && unsafeWindow.htmlToImage && unsafeWindow.htmlToImage.toPng) {
+          console.log('通过unsafeWindow找到html-to-image库');
+          return unsafeWindow.htmlToImage;
+        }
+      } catch (e) {
+        console.log('unsafeWindow不可用');
+      }
+      
+      const possibleGlobals = [
+        'htmlToImage',
+        'htmlToImageLib', 
+        'htmlToImageLibrary',
+        'HtmlToImage',
+        'HTMLToImage'
+      ];
+      
+      // 首先检查已知全局变量
+      for (const globalName of possibleGlobals) {
+        const global = window[globalName];
+        if (global && global.toPng) {
+          console.log(`找到库: ${globalName}`);
+          return global;
+        }
+      }
+      
+      // 如果没找到，检查window上所有包含html或image的属性
+      const allWindowProps = Object.keys(window);
+      const htmlImageProps = allWindowProps.filter(prop => 
+        prop.toLowerCase().includes('html') && prop.toLowerCase().includes('image')
+      );
+      
+      for (const prop of htmlImageProps) {
+        const global = window[prop];
+        if (global && global.toPng) {
+          console.log(`找到库: ${prop} (动态检测)`);
+          return global;
+        }
+      }
+      
+      // 尝试通过页面上下文访问
+      try {
+        const pageContextEval = function() {
+          return window.htmlToImage;
+        };
+        const pageLib = eval(`(${pageContextEval})()`);
+        if (pageLib && pageLib.toPng) {
+          console.log('通过页面上下文找到html-to-image库');
+          return pageLib;
+        }
+      } catch (e) {
+        console.log('页面上下文访问失败:', e);
+      }
+      
+      // 最后尝试通过document.currentScript等高级方式检测
+      try {
+        // 检查是否有任何脚本标签包含html-to-image
+        const scripts = document.querySelectorAll('script');
+        for (const script of scripts) {
+          if (script.src && script.src.includes('html-to-image')) {
+            console.log('找到html-to-image脚本，但需要手动检查导出');
+            // 这里可能需要更复杂的逻辑来获取导出
+          }
+        }
+      } catch (e) {
+        console.log('高级检测失败:', e);
+      }
+      
+      return null;
+    },
+
+    // 将对照块渲染为图片
+    async renderPairAsImage(pairElement) {
+      const MAX_WIDTH = 1080;
+      const BG_COLOR = '#ffffff';
+
+      const loadImage = (url) => new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.crossOrigin = 'anonymous';
+        img.src = url;
+      });
+
+      // 确保html-to-image库已加载
+      await this.ensureHtmlToImageLoaded();
+
+      // 创建临时容器进行样式清理
+      const tempContainer = document.createElement('div');
+      tempContainer.style.position = 'absolute';
+      tempContainer.style.left = '-9999px';
+      tempContainer.style.top = '-9999px';
+      tempContainer.style.backgroundColor = BG_COLOR;
+      tempContainer.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      tempContainer.style.fontSize = '16px';
+      tempContainer.style.lineHeight = '1.6';
+      tempContainer.style.color = '#0b0b0d';
+      tempContainer.style.padding = '20px';
+      tempContainer.style.boxSizing = 'border-box';
+      
+      const clonedPair = pairElement.cloneNode(true);
+      
+      // 调试信息：检查克隆的内容
+      console.log('原始对照块信息:', {
+        textContent: pairElement.textContent?.substring(0, 100),
+        innerHTML: pairElement.innerHTML?.substring(0, 200)
+      });
+      
+      console.log('克隆对照块信息:', {
+        textContent: clonedPair.textContent?.substring(0, 100),
+        innerHTML: clonedPair.innerHTML?.substring(0, 200)
+      });
+      
+      // 移除勾选框
+      const checkbox = clonedPair.querySelector('.ao3x-multiselect-checkbox');
+      const label = clonedPair.querySelector('.ao3x-multiselect-label');
+      if (checkbox) checkbox.remove();
+      if (label) label.remove();
+      
+      // 清理样式
+      clonedPair.style.border = 'none';
+      clonedPair.style.boxShadow = 'none';
+      clonedPair.style.borderRadius = '0';
+      clonedPair.style.margin = '0';
+      clonedPair.style.background = 'transparent';
+      
+      // 设置原文和译文样式
+      const origElement = clonedPair.querySelector('.orig');
+      const transElement = clonedPair.querySelector('.trans');
+      
+      if (origElement) {
+        origElement.style.color = '#374151';
+        origElement.style.lineHeight = '1.6';
+        origElement.style.marginBottom = '12px';
+        origElement.style.paddingBottom = '12px';
+        origElement.style.borderBottom = '1px solid #e5e5e5';
+      }
+      
+      if (transElement) {
+        transElement.style.color = '#111';
+        transElement.style.lineHeight = '1.7';
+        transElement.style.marginTop = '0';
+        transElement.style.paddingTop = '0';
+        transElement.style.borderTop = 'none';
+      }
+      
+      tempContainer.appendChild(clonedPair);
+      document.body.appendChild(tempContainer);
+      
+      // 调试信息：检查添加到容器后的内容
+      console.log('添加到容器后的对照块信息:', {
+        textContent: clonedPair.textContent?.substring(0, 100),
+        innerHTML: clonedPair.innerHTML?.substring(0, 200)
+      });
+      
+      console.log('完整临时容器信息:', {
+        textContent: tempContainer.textContent?.substring(0, 100),
+        innerHTML: tempContainer.innerHTML?.substring(0, 200)
+      });
+      
+      // 等待一小段时间确保样式应用
+      await sleep(100);
+      
+      const rect = tempContainer.getBoundingClientRect();
+      const width = Math.ceil(rect.width);
+      const dpr = Math.min(window.devicePixelRatio || 1, 3);
+      const pixelRatio = Math.min((MAX_WIDTH / width) || dpr, dpr);
+      
+      // 调试信息
+      console.log('临时容器信息:', {
+        width: rect.width,
+        height: rect.height,
+        content: tempContainer.textContent?.substring(0, 100),
+        innerHTML: tempContainer.innerHTML?.substring(0, 200)
+      });
+
+      // 获取html-to-image库
+      const htmlToImageLib = this.getHtmlToImageLib();
+      if (!htmlToImageLib || !htmlToImageLib.toPng) {
+        throw new Error('html-to-image库未正确加载');
+      }
+      
+      const dataUrl = await htmlToImageLib.toPng(tempContainer, {
+        backgroundColor: BG_COLOR,
+        pixelRatio,
+        cacheBust: true,
+        style: { 
+          width: width + 'px',
+          visibility: 'visible',
+          opacity: '1',
+          display: 'block'
+        },
+        filter: (node) => {
+          // 确保不过滤任何节点
+          return true;
+        }
+      });
+
+      document.body.removeChild(tempContainer);
+      
+      return new Promise(resolve => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0);
+          canvas.toBlob(blob => {
+            resolve(blob);
+          }, 'image/png');
+        };
+        img.src = dataUrl;
+      });
+    },
+
+    
+    // 显示图片预览
+    showImagePreview(imageBlob, fileName) {
+      const url = URL.createObjectURL(imageBlob);
+      const modal = document.createElement('div');
+      modal.className = 'ao3x-image-preview-modal';
+      modal.innerHTML = `
+        <div class="ao3x-image-preview-content">
+          <div class="ao3x-image-preview-header">
+            <span>${fileName}</span>
+            <button class="ao3x-image-preview-close" onclick="this.closest('.ao3x-image-preview-modal').remove()">×</button>
+          </div>
+          <div class="ao3x-image-preview-body">
+            <img src="${url}" alt="${fileName}" />
+          </div>
+          <div class="ao3x-image-preview-footer">
+            <button class="ao3x-image-preview-download" onclick="Controller.downloadImage('${url}', '${fileName}')">下载图片</button>
+            <button class="ao3x-image-preview-longpress" onmousedown="Controller.startImageLongPress(this)" ontouchstart="Controller.startImageLongPress(this)">长按保存</button>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(modal);
+
+      // 点击背景关闭
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          modal.remove();
+          URL.revokeObjectURL(url);
+        }
+      });
+    },
+
+    // 下载图片
+    downloadImage(url, fileName) {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${fileName}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      UI.toast(`已下载 ${fileName}.png`);
+    },
+
+    // 开始图片长按
+    startImageLongPress(button) {
+      let longPressTimer = setTimeout(() => {
+        const modal = button.closest('.ao3x-image-preview-modal');
+        const img = modal.querySelector('img');
+        if (img) {
+          const url = img.src;
+          const fileName = modal.querySelector('.ao3x-image-preview-header span').textContent;
+          this.downloadImage(url, fileName);
+        }
+      }, 1000);
+
+      const cancelLongPress = () => {
+        clearTimeout(longPressTimer);
+      };
+
+      button.addEventListener('mouseup', cancelLongPress);
+      button.addEventListener('mouseleave', cancelLongPress);
+      button.addEventListener('touchend', cancelLongPress);
+      button.addEventListener('touchcancel', cancelLongPress);
+    },
+
     // 获取作品名和章节名
     getWorkInfo() {
       const titleElement = document.querySelector('h2.title.heading');
       const workTitle = titleElement ? titleElement.textContent.trim() : '未知作品';
-      
+
       // 尝试多种章节名选择器
-      const chapterElement = document.querySelector('.chapter.preface.group h3.title a') || 
+      const chapterElement = document.querySelector('.chapter.preface.group h3.title a') ||
                            document.querySelector('.chapter h3.title a') ||
                            document.querySelector('h3.title a');
       const chapterTitle = chapterElement ? chapterElement.textContent.trim() : '未知章节';
-      
+
       return {
         workTitle: workTitle,
         chapterTitle: chapterTitle
       };
     },
-    
+
     // 下载翻译为TXT文件
     downloadTranslation() {
       const cacheInfo = TransStore.getCacheInfo();
@@ -1407,14 +2323,14 @@
         UI.toast('没有可下载的翻译内容');
         return;
       }
-      
+
       const { workTitle, chapterTitle } = this.getWorkInfo();
       const fileName = `${workTitle}-${chapterTitle}.txt`;
-      
+
       // 收集所有翻译内容
       let fullText = '';
       const total = cacheInfo.total;
-      
+
       for (let i = 0; i < total; i++) {
         const translation = TransStore.get(String(i));
         if (translation) {
@@ -1425,12 +2341,12 @@
           }
         }
       }
-      
+
       if (!fullText.trim()) {
         UI.toast('翻译内容为空');
         return;
       }
-      
+
       // 创建并下载文件
       const blob = new Blob([fullText], { type: 'text/plain;charset=utf-8' });
       const url = URL.createObjectURL(blob);
@@ -1441,20 +2357,20 @@
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      
+
       UI.toast(`已下载 ${fileName}`);
     },
-    
+
     // 智能提取文本，保留段落结构
     extractTextWithStructure(html) {
       // 创建临时DOM元素来解析HTML
       const tempDiv = document.createElement('div');
       tempDiv.innerHTML = html;
-      
+
       // 递归提取文本，保留段落结构
       const extractText = (element) => {
         let text = '';
-        
+
         // 处理文本节点
         for (let node of element.childNodes) {
           if (node.nodeType === Node.TEXT_NODE) {
@@ -1464,14 +2380,14 @@
             }
           } else if (node.nodeType === Node.ELEMENT_NODE) {
             const tagName = node.tagName.toLowerCase();
-            
+
             // 块级元素处理：添加换行
             if (['p', 'div', 'br', 'blockquote', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'].includes(tagName)) {
               const blockText = extractText(node).trim();
               if (blockText) {
                 text += blockText + '\n';
               }
-            } 
+            }
             // 行内元素处理：直接添加文本
             else if (['span', 'strong', 'em', 'i', 'b', 'a', 'code', 'small', 'sub', 'sup'].includes(tagName)) {
               text += extractText(node);
@@ -1482,13 +2398,13 @@
             }
           }
         }
-        
+
         return text;
       };
-      
+
       // 提取并清理文本
       let extractedText = extractText(tempDiv);
-      
+
       // 替换HTML实体字符
       extractedText = extractedText
         .replace(/&nbsp;/g, ' ')
@@ -1497,7 +2413,7 @@
         .replace(/&amp;/g, '&')
         .replace(/&quot;/g, '"')
         .replace(/&#39;/g, "'");
-      
+
       // 清理多余的空格和换行
       extractedText = extractedText
         .replace(/[ \t]+/g, ' ')  // 多个空格/制表符合并为一个空格
@@ -1505,10 +2421,10 @@
         .replace(/\n +\n/g, '\n\n')  // 移除空行中的空格
         .replace(/\s+$/g, '')  // 移除末尾空格
         .replace(/^\s+/g, '');  // 移除开头空格
-      
+
       return extractedText.trim();
     },
-    
+
     // 直接应用到已有 DOM（不受顺序指针限制），用于重试/修复历史块
     applyDirect(i, html){
       const c = document.querySelector('#ao3x-render'); if (!c) return;
@@ -1619,7 +2535,7 @@
     async startTranslate(){
       const nodes = collectChapterUserstuffSmart(); if(!nodes.length){ UI.toast('未找到章节正文'); return; }
       markSelectedNodes(nodes); renderContainer = null; UI.showToolbar(); View.info('准备中…');
-      
+
       // 重置缓存显示状态，因为现在要开始新的翻译
       View.setShowingCache(false);
       UI.updateToolbarState(); // 更新工具栏状态，重新显示双语对照按钮
@@ -1977,38 +2893,38 @@
     try {
       // 标记当前正在显示缓存
       View.setShowingCache(true);
-      
+
       // 收集章节内容并创建翻译计划
       markSelectedNodes(nodes);
-      
+
       const allHtml = nodes.map(n => n.innerHTML);
       const fullHtml = allHtml.join('\n');
-      
+
       // 估算token并创建计划
       const s = settings.get();
       const allText = stripHtmlToText(fullHtml);
       const allEstIn = await estimateTokensForText(allText);
-      
+
       const cw = s.model.contextWindow || 8192;
       const maxT = s.gen.maxTokens || 1024;
       const ratio = Math.max(0.3, s.planner?.ratioOutPerIn ?? 0.7);
       const reserve = s.planner?.reserve ?? 384;
       const packSlack = Math.max(0.5, Math.min(1, s.planner?.packSlack ?? 0.95));
-      
+
       // 固定prompt token（不含正文）
       const promptTokens = await estimatePromptTokensFromMessages([
         { role:'system', content: s.prompt.system || '' },
         { role:'user',   content: (s.prompt.userTemplate || '').replace('{{content}}','') }
       ]);
-      
+
       const cap1 = maxT / ratio;
       const cap2 = (cw - promptTokens - reserve) / (1 + ratio);
       const maxInputBudgetRaw = Math.max(0, Math.min(cap1, cap2));
       const maxInputBudget = Math.floor(maxInputBudgetRaw * packSlack);
-      
+
       const slackSingle = s.planner?.singleShotSlackRatio ?? 0.15;
       const canSingle = allEstIn <= maxInputBudget * (1 + Math.max(0, slackSingle));
-      
+
       // 创建计划（与缓存大小匹配）
       let plan = [];
       if (canSingle) {
@@ -2017,7 +2933,7 @@
       } else {
         plan = await packIntoChunks(allHtml, maxInputBudget);
       }
-      
+
       // 确保计划长度与缓存匹配
       if (plan.length !== cacheInfo.total) {
         // 如果不匹配，调整计划长度以匹配缓存
@@ -2025,11 +2941,11 @@
           // 需要分更多块
           const remaining = cacheInfo.total - plan.length;
           for (let i = 0; i < remaining; i++) {
-            plan.push({ 
-              index: plan.length + i, 
-              html: '', 
-              text: '', 
-              inTok: 0 
+            plan.push({
+              index: plan.length + i,
+              html: '',
+              text: '',
+              inTok: 0
             });
           }
         } else {
@@ -2037,29 +2953,29 @@
           plan = plan.slice(0, cacheInfo.total);
         }
       }
-      
+
       // 渲染计划锚点
       renderPlanAnchors(plan);
       View.setMode('trans');
       RenderState.setTotal(plan.length);
       Bilingual.setTotal(plan.length);
-      
+
       // 显示工具栏
       UI.showToolbar();
-      
+
       // 刷新显示以加载缓存内容
       View.refresh(true);
-      
+
       // 更新工具栏状态
       UI.updateToolbarState();
-      
+
       // 显示提示信息
       UI.toast(`已自动加载 ${cacheInfo.completed}/${cacheInfo.total} 段缓存翻译`);
-      
+
       if (settings.get().debug) {
         console.log('[AO3X] Auto-loaded cache:', cacheInfo);
       }
-      
+
     } catch (e) {
       console.error('[AO3X] Failed to auto-load cache:', e);
       UI.toast('自动加载缓存失败');
@@ -2070,13 +2986,13 @@
   function init(){
     UI.init();
     applyFontSize(); // 应用初始字体大小设置
-    
+
     // 初始化翻译缓存
     TransStore.initCache();
-    
+
     const nodes = collectChapterUserstuffSmart();
     if (!nodes.length) UI.toast('未找到章节正文（请确认页面是否是章节页）');
-    
+
     // 检查是否有缓存，如果有则自动加载
     const cacheInfo = TransStore.getCacheInfo();
     if (cacheInfo.hasCache) {
@@ -2085,7 +3001,7 @@
         autoLoadFromCache(nodes, cacheInfo);
       }, 100);
     }
-    
+
     const mo = new MutationObserver(()=>{ /* no-op，保留接口 */ });
     mo.observe(document.documentElement, { childList:true, subtree:true });
   }
