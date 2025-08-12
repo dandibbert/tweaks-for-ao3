@@ -121,7 +121,45 @@
       wrap.className = 'ao3x-fab-wrap';
       const btnTranslate = document.createElement('button'); btnTranslate.className = 'ao3x-btn'; btnTranslate.textContent = '🌐';
       const btnMain = document.createElement('button'); btnMain.className = 'ao3x-btn'; btnMain.textContent = '⚙️';
-      btnTranslate.addEventListener('click', () => Controller.startTranslate());
+      
+      // 添加长按下载功能
+      let longPressTimer = null;
+      let isLongPress = false;
+      
+      const startLongPress = () => {
+        isLongPress = false;
+        longPressTimer = setTimeout(() => {
+          isLongPress = true;
+          Controller.downloadTranslation();
+        }, 1000); // 1秒长按
+      };
+      
+      const cancelLongPress = () => {
+        clearTimeout(longPressTimer);
+      };
+      
+      // 鼠标事件（桌面）
+      btnTranslate.addEventListener('mousedown', startLongPress);
+      btnTranslate.addEventListener('mouseup', cancelLongPress);
+      btnTranslate.addEventListener('mouseleave', cancelLongPress);
+      
+      // 触摸事件（移动设备）
+      btnTranslate.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        startLongPress();
+      });
+      btnTranslate.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        cancelLongPress();
+      });
+      btnTranslate.addEventListener('touchcancel', cancelLongPress);
+      
+      btnTranslate.addEventListener('click', (e) => {
+        if (!isLongPress) {
+          Controller.startTranslate();
+        }
+      });
+      
       btnMain.addEventListener('click', () => UI.openPanel());
       wrap.appendChild(btnTranslate); wrap.appendChild(btnMain); document.body.appendChild(wrap);
       UI.buildPanel(); UI.buildToolbar(); UI.ensureToast();
@@ -1345,6 +1383,132 @@
 
   /* ================= Controller ================= */
   const Controller = {
+    // 获取作品名和章节名
+    getWorkInfo() {
+      const titleElement = document.querySelector('h2.title.heading');
+      const workTitle = titleElement ? titleElement.textContent.trim() : '未知作品';
+      
+      // 尝试多种章节名选择器
+      const chapterElement = document.querySelector('.chapter.preface.group h3.title a') || 
+                           document.querySelector('.chapter h3.title a') ||
+                           document.querySelector('h3.title a');
+      const chapterTitle = chapterElement ? chapterElement.textContent.trim() : '未知章节';
+      
+      return {
+        workTitle: workTitle,
+        chapterTitle: chapterTitle
+      };
+    },
+    
+    // 下载翻译为TXT文件
+    downloadTranslation() {
+      const cacheInfo = TransStore.getCacheInfo();
+      if (!cacheInfo.hasCache || cacheInfo.completed === 0) {
+        UI.toast('没有可下载的翻译内容');
+        return;
+      }
+      
+      const { workTitle, chapterTitle } = this.getWorkInfo();
+      const fileName = `${workTitle}-${chapterTitle}.txt`;
+      
+      // 收集所有翻译内容
+      let fullText = '';
+      const total = cacheInfo.total;
+      
+      for (let i = 0; i < total; i++) {
+        const translation = TransStore.get(String(i));
+        if (translation) {
+          // 智能提取文本，保留段落结构
+          const text = this.extractTextWithStructure(translation);
+          if (text) {
+            fullText += text + '\n\n';
+          }
+        }
+      }
+      
+      if (!fullText.trim()) {
+        UI.toast('翻译内容为空');
+        return;
+      }
+      
+      // 创建并下载文件
+      const blob = new Blob([fullText], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      UI.toast(`已下载 ${fileName}`);
+    },
+    
+    // 智能提取文本，保留段落结构
+    extractTextWithStructure(html) {
+      // 创建临时DOM元素来解析HTML
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = html;
+      
+      // 递归提取文本，保留段落结构
+      const extractText = (element) => {
+        let text = '';
+        
+        // 处理文本节点
+        for (let node of element.childNodes) {
+          if (node.nodeType === Node.TEXT_NODE) {
+            const content = node.textContent.trim();
+            if (content) {
+              text += content + ' ';
+            }
+          } else if (node.nodeType === Node.ELEMENT_NODE) {
+            const tagName = node.tagName.toLowerCase();
+            
+            // 块级元素处理：添加换行
+            if (['p', 'div', 'br', 'blockquote', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'].includes(tagName)) {
+              const blockText = extractText(node).trim();
+              if (blockText) {
+                text += blockText + '\n';
+              }
+            } 
+            // 行内元素处理：直接添加文本
+            else if (['span', 'strong', 'em', 'i', 'b', 'a', 'code', 'small', 'sub', 'sup'].includes(tagName)) {
+              text += extractText(node);
+            }
+            // 其他元素：递归处理
+            else {
+              text += extractText(node);
+            }
+          }
+        }
+        
+        return text;
+      };
+      
+      // 提取并清理文本
+      let extractedText = extractText(tempDiv);
+      
+      // 替换HTML实体字符
+      extractedText = extractedText
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&amp;/g, '&')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'");
+      
+      // 清理多余的空格和换行
+      extractedText = extractedText
+        .replace(/[ \t]+/g, ' ')  // 多个空格/制表符合并为一个空格
+        .replace(/\n\s*\n\s*\n/g, '\n\n')  // 多个空行合并为两个换行
+        .replace(/\n +\n/g, '\n\n')  // 移除空行中的空格
+        .replace(/\s+$/g, '')  // 移除末尾空格
+        .replace(/^\s+/g, '');  // 移除开头空格
+      
+      return extractedText.trim();
+    },
+    
     // 直接应用到已有 DOM（不受顺序指针限制），用于重试/修复历史块
     applyDirect(i, html){
       const c = document.querySelector('#ao3x-render'); if (!c) return;
