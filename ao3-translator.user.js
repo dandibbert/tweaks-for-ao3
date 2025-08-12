@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译（移动端 Safari / Tampermonkey）
 // @namespace    https://ao3-translate.example
-// @version      0.4.9
+// @version      0.3.9
 // @description  精确tiktoken计数；英→中默认输出≈0.7×输入；最大化单次输入、最小化请求数；首块实测动态校准并对未启动块合包；有序流式不跳动；OpenAI-compatible；流式/非流式；finish_reason智能；红白优雅UI；计划面板显示真实in tokens。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -861,26 +861,19 @@
   }
   function segmentSentencesFromHTML(html){
     const tmp=document.createElement('div'); tmp.innerHTML=html; const parts=[]; 
-    // 处理块级元素，但避免重复处理嵌套内容
-    const blocks=$all('p, div, li, pre', tmp);
-    // 单独处理blockquote，保持其完整性
-    const blockquotes=$all('blockquote', tmp);
+    // 处理块级元素，包括blockquote在内的所有块级元素
+    const blocks=$all('p, div, li, pre, blockquote', tmp);
     
-    if(!blocks.length && !blockquotes.length){ 
+    if(!blocks.length){ 
       parts.push(html); 
       return parts; 
     }
     
-    // 首先处理非blockquote的块级元素
+    // 处理所有块级元素，包括blockquote
     for(const b of blocks) {
-      // 检查是否在blockquote内部，如果是则跳过（由blockquote统一处理）
-      if(b.closest('blockquote')) continue;
+      // 检查是否在其他块级元素内部，避免重复处理
+      if(b.closest('p, div, li, pre, blockquote') && !b.parentElement?.isEqualNode(tmp)) continue;
       parts.push(b.outerHTML);
-    }
-    
-    // 然后处理blockquote，保持其完整性
-    for(const bq of blockquotes) {
-      parts.push(bq.outerHTML);
     }
     
     return parts;
@@ -1275,28 +1268,12 @@
     setTotal(n){ this._total = n; }, _total: null,
     splitParagraphs(html){
       const div = document.createElement('div'); div.innerHTML = html; const out = [];
-      // 处理段落和列表项
-      div.querySelectorAll('p, li, pre').forEach(el=>{ 
+      // 处理所有块级元素，包括blockquote
+      div.querySelectorAll('p, div, li, pre, blockquote').forEach(el=>{ 
         const text=(el.textContent||'').trim(); 
         if(!text) return; 
-        // 检查是否在blockquote内部，如果是则跳过
-        if(el.closest('blockquote')) return;
-        out.push(el.outerHTML); 
-      });
-      
-      // 单独处理blockquote，保持其完整性
-      div.querySelectorAll('blockquote').forEach(el=>{ 
-        const text=(el.textContent||'').trim(); 
-        if(!text) return; 
-        out.push(el.outerHTML); 
-      });
-      
-      // 处理div（非blockquote内的）
-      div.querySelectorAll('div').forEach(el=>{ 
-        const text=(el.textContent||'').trim(); 
-        if(!text) return; 
-        // 检查是否在blockquote内部，如果是则跳过
-        if(el.closest('blockquote')) return;
+        // 检查是否在其他块级元素内部，避免重复处理
+        if(el.closest('p, div, li, pre, blockquote') && !el.parentElement?.isEqualNode(div)) return;
         out.push(el.outerHTML); 
       });
       
