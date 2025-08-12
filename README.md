@@ -3,8 +3,7 @@ Some tweaks for using AO3 on your iPhone. Safari and Userscripts.
 
 ## AO3 全文翻译（移动端 Safari / Tampermonkey）
 
-为 [Archive of Our Own](https://archiveofourown.org/) 的**作品/章节页面**添加一键全文翻译功能。脚本在页面内流式渲染译文，支持断点续传与缓存，无需跳转或复制内容。适配移动端 Safari 与桌面浏览器的 Tampermonkey 环境。 :contentReference[oaicite:0]{index=0}
-
+为 [Archive of Our Own](https://archiveofourown.org/) 的**作品/章节页面**添加一键全文翻译功能。脚本在页面内流式渲染译文，支持断点续传与缓存，无需跳转或复制内容。适配移动端 Safari 与桌面浏览器的 Tampermonkey 环境。
 ---
 
 ### 功能特性
@@ -33,7 +32,7 @@ Some tweaks for using AO3 on your iPhone. Safari and Userscripts.
 2. 新建用户脚本，粘贴本仓库的 `ao3-translator.user.js`。  
 3. 访问任意 AO3 **作品页**或**章节页**（匹配：`/works/*`、`/chapters/*`），页面右侧会出现悬浮按钮。  
 
-> 默认运行时机：`document-idle`；跨域：`@connect *`（用于调用你配置的 API 网关）。 :contentReference[oaicite:1]{index=1}
+> 默认运行时机：`document-idle`；跨域：`@connect *`（用于调用你配置的 API 网关）。
 
 ---
 
@@ -57,8 +56,7 @@ Some tweaks for using AO3 on your iPhone. Safari and Userscripts.
 - **Token 估算器（本地启发式）**：避免外部依赖；结合上下文窗口、Max Tokens、保留预算（Reserve）等生成**最大化单次输入**的切块计划。  
 - **流式 / 非流式均支持**：SSE 增量处理，按顺序输出到对应块，确保光标/滚动位置稳定。  
 - **「思考内容」过滤**：对带 `<thinking>`/`<think>` 等痕迹的模型输出进行清洗，仅保留可见译文。  
-- **本地缓存**：以页面路径为键存储每段译文与完成标记；刷新自动装载，可随时清除。 :contentReference[oaicite:2]{index=2}
-
+- **本地缓存**：以页面路径为键存储每段译文与完成标记；刷新自动装载，可随时清除。
 ---
 
 ### 兼容性
@@ -67,7 +65,7 @@ Some tweaks for using AO3 on your iPhone. Safari and Userscripts.
 - 页面匹配：  
   - `https://archiveofourown.org/works/*`  
   - `https://archiveofourown.org/chapters/*`  
-- 权限与运行：`@run-at document-idle`，`@connect *`，`GM_*` 存取配置与样式注入。 :contentReference[oaicite:3]{index=3}
+- 权限与运行：`@run-at document-idle`，`@connect *`，`GM_*` 存取配置与样式注入。
 
 ---
 
