@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         AO3 标签预览面板 (优化版) - 稳定长按&防误触&彻底禁菜单
+// @name         AO3 标签预览面板 (优化版) - 稳定长按&防误触&彻底禁菜单 [修复版]
 // @namespace    http://tampermonkey.net/
-// @version      2.7
-// @description  AO3 标签预览面板；仅长按模式下点触无动作，长按弹面板；面板打开期间全局禁用右键/长按菜单；点击空白必关；不阻塞滑动；防幽灵点击。
+// @version      2.7-fix1
+// @description  AO3 标签预览面板；仅长按模式下点触无动作，长按弹面板；面板打开期间全局禁用右键/长按菜单；点击空白必关；不阻塞滑动；防幽灵点击。修复：仅在需要时才抑制“幽灵点击”，避免误伤非 tag 链接/按钮。
 // @match        https://archiveofourown.org/*
 // @grant        GM_addStyle
 // @grant        GM_registerMenuCommand
@@ -21,7 +21,7 @@
       tapMaxDuration: 200,
       tapConfirmDelay: 90,
       longPressDuration: 500,
-      ignoreClickWindow: 450,
+      ignoreClickWindow: 450, // 仅在需要时启动，避免全局误伤
       animationDuration: 220,
       copyHintDuration: 1400,
       vibrationDuration: 15,
@@ -126,6 +126,11 @@
       user-select: none !important;
     }
   `);
+
+  // —— 新增：仅在需要时抑制后续“幽灵点击” —— //
+  function armIgnoreClicks() {
+    state.ignoreClickUntil = Date.now() + CONFIG.ui.ignoreClickWindow;
+  }
 
   const panel = {
     el: null, overlay: null, txt: null, copyBtn: null, openBtn: null, hint: null,
@@ -252,6 +257,7 @@
           const target = document.elementFromPoint(cur.clientX, cur.clientY);
           if (openPanelFor(target, e)) {
             state.longPressFired = true;
+            armIgnoreClicks(); // 仅在真正打开面板时抑制后续“幽灵点击”
           }
         }, CONFIG.ui.longPressDuration);
       }
@@ -269,14 +275,18 @@
     }, { passive: true, capture: true });
 
     document.addEventListener('touchend', (e) => {
-      state.ignoreClickUntil = Date.now() + CONFIG.ui.ignoreClickWindow;
+      // 【修复】不再无条件 arm ignoreClickUntil
       clearTimeout(state.longPressTimer); state.longPressTimer = null;
 
       if (state.onlyLongPress) {
         if (!state.longPressFired) {
           const touch = e.changedTouches && e.changedTouches[0];
           const target = touch ? document.elementFromPoint(touch.clientX, touch.clientY) : e.target;
-          if (findTagFrom(target)) { e.preventDefault(); e.stopPropagation(); }
+          if (findTagFrom(target)) { 
+            // 仅拦截 tag 的轻点，其他元素不受影响
+            e.preventDefault(); e.stopPropagation();
+            armIgnoreClicks(); // 只有拦截时才抑制合成 click，避免误伤
+          }
         }
         return;
       }
@@ -293,16 +303,20 @@
       state.confirmTimer = setTimeout(() => {
         const afterY = window.pageYOffset || document.documentElement.scrollTop || 0;
         if (Math.abs(afterY - endScrollY) > 0) return;
-        openPanelFor(endTarget, e);
+        if (openPanelFor(endTarget, e)) {
+          armIgnoreClicks(); // 非仅长按模式下，轻点开面板后抑制“幽灵点击”
+        }
       }, CONFIG.ui.tapConfirmDelay);
     }, { passive: false, capture: true });
   } else {
+    // 非触屏（桌面）环境
     document.addEventListener('click', (e) => {
       if (Date.now() < state.ignoreClickUntil) { e.preventDefault(); e.stopPropagation(); return; }
       const tag = findTagFrom(e.target);
       if (!tag) return;
       if (state.onlyLongPress) { e.preventDefault(); e.stopPropagation(); return; }
       e.preventDefault(); e.stopPropagation(); panel.show(tag);
+      // 桌面下无需 armIgnoreClicks（没有合成 click 问题）
     }, true);
   }
 
