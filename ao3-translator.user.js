@@ -2545,19 +2545,39 @@
         return;
       }
 
-      // 创建并下载文件
-      const blob = new Blob([fullText], { type: 'text/plain;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+// ★ 根据 UA 选择下载方式
+const ua = navigator.userAgent || '';
+const isEvans = ua === 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1 EvansBrowser/1.0'
+             || ua.includes('EvansBrowser/1.0');
 
-      UI.toast(`已下载 ${fileName}`);
-    },
+if (isEvans) {
+  // EvansBrowser：用表单 POST 到 Cloudflare Workers，字段名 text
+  const action = `https://txt.jagerze.tech/cd-post/${encodeURIComponent(fileName)}`;
+  const form = document.createElement('form');
+  form.method = 'POST';
+  form.action = action;
+  form.style.display = 'none';
+  const textarea = document.createElement('textarea');
+  textarea.name = 'text';          // Workers 会从这个字段拿文本
+  textarea.value = fullText;
+  form.appendChild(textarea);
+  document.body.appendChild(form);
+  form.submit();
+  setTimeout(() => form.remove(), 2000);
+  UI.toast(`正在通过 Cloudflare Workers 下载 ${fileName}`);
+} else {
+  // 其他浏览器：保留原来的 Blob 下载方法
+  const blob = new Blob([fullText], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  UI.toast(`已下载 ${fileName}`);
+}
 
     // 智能提取文本，保留段落结构
     extractTextWithStructure(html) {
