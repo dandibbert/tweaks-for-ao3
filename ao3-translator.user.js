@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译（移动端 Safari / Tampermonkey）
 // @namespace    https://ao3-translate.example
-// @version      0.4.9
+// @version      0.5.9
 // @description  精确tiktoken计数；英→中默认输出≈0.7×输入；最大化单次输入、最小化请求数；首块实测动态校准并对未启动块合包；有序流式不跳动；OpenAI-compatible；流式/非流式；finish_reason智能；红白优雅UI；计划面板显示真实in tokens。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -2545,39 +2545,40 @@
         return;
       }
 
-// ★ 根据 UA 选择下载方式
+// ★ 根据 UA 选择下载方式（EvansBrowser 走 CF Workers 表单 POST）
 const ua = navigator.userAgent || '';
-const isEvans = ua === 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1 EvansBrowser/1.0'
-             || ua.includes('EvansBrowser/1.0');
+const isEvans = /\bEvansBrowser\/\d/i.test(ua);  // 放宽匹配，避免等号匹配失败
 
 if (isEvans) {
-  // EvansBrowser：用表单 POST 到 Cloudflare Workers，字段名 text
+  UI.toast('EvansBrowser → 走 Cloudflare Workers（POST）');
   const action = `https://txt.jagerze.tech/cd-post/${encodeURIComponent(fileName)}`;
   const form = document.createElement('form');
   form.method = 'POST';
   form.action = action;
   form.style.display = 'none';
+
   const textarea = document.createElement('textarea');
-  textarea.name = 'text';          // Workers 会从这个字段拿文本
+  textarea.name = 'text';   // Workers 从这个字段取文本
   textarea.value = fullText;
+
   form.appendChild(textarea);
   document.body.appendChild(form);
   form.submit();
   setTimeout(() => form.remove(), 2000);
-  UI.toast(`正在通过 Cloudflare Workers 下载 ${fileName}`);
-} else {
-  // 其他浏览器：保留原来的 Blob 下载方法
-  const blob = new Blob([fullText], { type: 'text/plain;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = fileName;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-  UI.toast(`已下载 ${fileName}`);
+  return; // 别继续走 Blob 分支
 }
+
+// ↓ 其他浏览器保留原来的 Blob 下载
+const blob = new Blob([fullText], { type: 'text/plain;charset=utf-8' });
+const url = URL.createObjectURL(blob);
+const a = document.createElement('a');
+a.href = url;
+a.download = fileName;
+document.body.appendChild(a);
+a.click();
+document.body.removeChild(a);
+URL.revokeObjectURL(url);
+UI.toast(`已下载 ${fileName}`);
 
     // 智能提取文本，保留段落结构
     extractTextWithStructure(html) {
