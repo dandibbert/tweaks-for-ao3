@@ -2545,40 +2545,41 @@
         return;
       }
 
-// ★ 根据 UA 选择下载方式（EvansBrowser 走 CF Workers 表单 POST）
-const ua = navigator.userAgent || '';
-const isEvans = /\bEvansBrowser\/\d/i.test(ua);  // 放宽匹配，避免等号匹配失败
+      // ★ 根据 UA 选择下载方式（EvansBrowser 走 CF Workers 表单 POST）
+      const ua = navigator.userAgent || '';
+      const isEvans = /\bEvansBrowser\/\d/i.test(ua);  // 放宽匹配，避免等号匹配失败
 
-if (isEvans) {
-  UI.toast('EvansBrowser → 走 Cloudflare Workers（POST）');
-  const action = `https://txt.jagerze.tech/cd-post/${encodeURIComponent(fileName)}`;
-  const form = document.createElement('form');
-  form.method = 'POST';
-  form.action = action;
-  form.style.display = 'none';
+      if (isEvans) {
+        UI.toast('EvansBrowser → 走 Cloudflare Workers（POST）');
+        const action = `https://txt.jagerze.tech/cd-post/${encodeURIComponent(fileName)}`;
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = action;
+        form.style.display = 'none';
 
-  const textarea = document.createElement('textarea');
-  textarea.name = 'text';   // Workers 从这个字段取文本
-  textarea.value = fullText;
+        const textarea = document.createElement('textarea');
+        textarea.name = 'text';   // Workers 从这个字段取文本
+        textarea.value = fullText;
 
-  form.appendChild(textarea);
-  document.body.appendChild(form);
-  form.submit();
-  setTimeout(() => form.remove(), 2000);
-  return; // 别继续走 Blob 分支
-}
+        form.appendChild(textarea);
+        document.body.appendChild(form);
+        form.submit();
+        setTimeout(() => form.remove(), 2000);
+        return; // 别继续走 Blob 分支
+      }
 
-// ↓ 其他浏览器保留原来的 Blob 下载
-const blob = new Blob([fullText], { type: 'text/plain;charset=utf-8' });
-const url = URL.createObjectURL(blob);
-const a = document.createElement('a');
-a.href = url;
-a.download = fileName;
-document.body.appendChild(a);
-a.click();
-document.body.removeChild(a);
-URL.revokeObjectURL(url);
-UI.toast(`已下载 ${fileName}`);
+      // ↓ 其他浏览器保留原来的 Blob 下载
+      const blob = new Blob([fullText], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      UI.toast(`已下载 ${fileName}`);
+    },
 
     // 智能提取文本，保留段落结构
     extractTextWithStructure(html) {
