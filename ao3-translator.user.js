@@ -352,11 +352,17 @@
             View.setShowingCache(false);
             UI.updateToolbarState(); // 更新工具栏状态，重新显示双语对照按钮
             UI.toast('缓存已清除');
-            // 隐藏工具栏如果没有翻译内容
+            // 删除翻译容器
             const renderContainer = document.querySelector('#ao3x-render');
             if (renderContainer) {
               renderContainer.remove();
             }
+            // 恢复原始章节内容的显示
+            SelectedNodes.forEach(node => {
+              node.style.display = '';
+            });
+            // 切换到原文模式
+            View.setMode('orig');
             UI.hideToolbar();
           }
           return;
@@ -365,66 +371,6 @@
         if (!action && !btn.disabled) { btn.classList.add('active'); View.setMode(btn.getAttribute('data-mode')); }
       });
 
-      // 添加双语对照按钮的长按多选功能
-      const biBtn = bar.querySelector('[data-mode="bi"]');
-      if (biBtn) {
-        let multiSelectLongPressTimer = null;
-        let isMultiSelectLongPress = false;
-
-        const startMultiSelectLongPress = () => {
-          isMultiSelectLongPress = false;
-          multiSelectLongPressTimer = setTimeout(() => {
-            isMultiSelectLongPress = true;
-            Controller.enterMultiSelectMode();
-          }, 1000); // 1秒长按
-        };
-
-        const cancelMultiSelectLongPress = () => {
-          clearTimeout(multiSelectLongPressTimer);
-          isMultiSelectLongPress = false;
-        };
-
-        // iOS Safari文本选择防护
-        const preventSelection = (e) => {
-          if (e.target.closest('.ao3x-toolbar-btn')) {
-            e.preventDefault();
-            e.stopPropagation();
-            return false;
-          }
-        };
-
-        // 鼠标事件（桌面）
-        biBtn.addEventListener('mousedown', (e) => {
-          preventSelection(e);
-          startMultiSelectLongPress();
-        });
-        biBtn.addEventListener('mouseup', cancelMultiSelectLongPress);
-        biBtn.addEventListener('mouseleave', cancelMultiSelectLongPress);
-
-        // 触摸事件（移动设备）
-        biBtn.addEventListener('touchstart', (e) => {
-          preventSelection(e);
-          startMultiSelectLongPress();
-        });
-        biBtn.addEventListener('touchend', cancelMultiSelectLongPress);
-        biBtn.addEventListener('touchcancel', cancelMultiSelectLongPress);
-
-        biBtn.addEventListener('click', (e) => {
-          // 如果是多选模式，退出多选模式
-          if (Controller.isInMultiSelectMode()) {
-            Controller.exitMultiSelectMode();
-            return;
-          }
-
-          // 正常的翻译按钮点击功能
-          const action = biBtn.getAttribute('data-action');
-          if (!action && !biBtn.disabled) {
-            [...bar.querySelectorAll('button')].forEach(b => { if (!b.getAttribute('data-action')) b.classList.remove('active', 'highlight'); });
-            biBtn.classList.add('active');
-            View.setMode(biBtn.getAttribute('data-mode'));
-          }
-        });
-      }
       document.body.appendChild(bar); UI._toolbar = bar;
     },
     showToolbar() { UI._toolbar.style.display = 'flex'; },
@@ -862,128 +808,6 @@
       }
 
 
-      /* 对照块勾选框 */
-      .ao3x-multiselect-label{
-        position:absolute;left:50%;top:50%;transform:translate(-50%, -50%);
-        cursor:pointer;z-index:10;
-        background:white;padding:4px;border-radius:4px;
-        box-shadow:0 2px 4px rgba(0,0,0,0.1);
-      }
-      .ao3x-multiselect-checkbox{
-        width:18px;height:18px;cursor:pointer;
-        accent-color:var(--c-accent);
-      }
-      .ao3x-pair{
-        position:relative; /* 为绝对定位的勾选框提供参考 */
-      }
-      .ao3x-pair:hover{
-        background:var(--c-soft);
-      }
-      .ao3x-pair.selected{
-        background:rgba(179,0,0,.05);
-        border-color:var(--c-accent);
-      }
-
-      /* 浮动保存按钮 */
-      .ao3x-multiselect-save{
-        position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
-        z-index:999999;background:var(--c-accent);color:white;
-        border:none;padding:12px 24px;border-radius:var(--radius-full);
-        font-size:14px;font-weight:500;cursor:pointer;
-        box-shadow:0 4px 12px rgba(179,0,0,.25);
-        transition:all .2s;pointer-events:auto;user-select:none;
-        -webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;
-      }
-      .ao3x-multiselect-save:hover{
-        background:#9a0000;transform:translateX(-50%) translateY(-2px);
-        box-shadow:0 6px 16px rgba(179,0,0,.35);
-      }
-      .ao3x-multiselect-save:active{
-        transform:translateX(-50%) translateY(0);
-      }
-
-      /* 图片预览模态框 */
-      .ao3x-image-preview-modal{
-        position:fixed;inset:0;background:rgba(0,0,0,.8);
-        z-index:100001;display:flex;align-items:center;
-        justify-content:center;padding:20px;
-        backdrop-filter:blur(4px);
-      }
-      .ao3x-image-preview-content{
-        background:white;border-radius:var(--radius);
-        max-width:90vw;max-height:90vh;overflow:hidden;
-        box-shadow:0 8px 32px rgba(0,0,0,.3);
-        display:flex;flex-direction:column;
-      }
-      .ao3x-image-preview-header{
-        display:flex;align-items:center;justify-content:space-between;
-        padding:16px 20px;border-bottom:1px solid var(--c-border);
-        background:var(--c-soft);
-      }
-      .ao3x-image-preview-header span{
-        font-size:16px;font-weight:600;color:var(--c-fg);
-      }
-      .ao3x-image-preview-close{
-        background:transparent;border:none;
-        color:var(--c-muted);width:32px;height:32px;
-        border-radius:var(--radius-full);font-size:20px;
-        line-height:1;cursor:pointer;transition:all .2s;
-      }
-      .ao3x-image-preview-close:hover{
-        background:var(--c-accent);color:white;
-      }
-      .ao3x-image-preview-body{
-        padding:20px;overflow:auto;
-        display:flex;align-items:center;justify-content:center;
-      }
-      .ao3x-image-preview-body img{
-        max-width:100%;max-height:60vh;
-        border-radius:var(--radius);box-shadow:0 2px 8px rgba(0,0,0,.1);
-      }
-      .ao3x-image-preview-footer{
-        display:flex;gap:12px;padding:16px 20px;
-        border-top:1px solid var(--c-border);
-        background:var(--c-soft);
-      }
-      .ao3x-image-preview-download,
-      .ao3x-image-preview-longpress{
-        flex:1;padding:10px 16px;border-radius:var(--radius-full);
-        border:none;font-size:14px;font-weight:500;cursor:pointer;
-        transition:all .2s;
-      }
-      .ao3x-image-preview-download{
-        background:var(--c-accent);color:white;
-      }
-      .ao3x-image-preview-download:hover{
-        background:#9a0000;
-      }
-      .ao3x-image-preview-longpress{
-        background:var(--c-border);color:var(--c-fg);
-      }
-      .ao3x-image-preview-longpress:hover{
-        background:var(--c-muted);color:white;
-      }
-
-      /* 移动端优化 */
-      @media (max-width:768px){
-        .ao3x-multiselect-ui{
-          top:8px;left:12px;right:12px;transform:none;
-          padding:10px 16px;font-size:13px;
-        }
-        .ao3x-multiselect-save{
-          bottom:16px;left:12px;right:12px;transform:none;
-          padding:14px 20px;
-        }
-        .ao3x-image-preview-content{
-          max-width:95vw;max-height:95vh;
-        }
-        .ao3x-image-preview-body{
-          padding:16px;
-        }
-        .ao3x-image-preview-footer{
-          flex-direction:column;gap:8px;
-        }
-      }
     `);
   }
   function debounce(fn, wait){ let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), wait); }; }
@@ -1583,919 +1407,9 @@
 
   /* ================= Controller ================= */
   const Controller = {
-    // 多选模式状态
-    _multiSelectMode: false,
-    _selectedBlocks: new Set(),
-    _multiSelectUI: null,
 
-    // 检查是否处于多选模式
-    isInMultiSelectMode() {
-      return this._multiSelectMode;
-    },
 
-    // 进入多选模式
-    enterMultiSelectMode() {
-      if (this._multiSelectMode) return;
 
-      // 确保当前是双语对照模式
-      if (View.mode !== 'bi') {
-        View.setMode('bi');
-      }
-
-      this._multiSelectMode = true;
-      this._selectedBlocks.clear();
-
-      // 更新按钮文本
-      this.updateBiButtonText();
-
-      // 为每个对照块添加勾选框
-      this.addCheckboxesToPairs();
-
-      // 显示浮动保存按钮
-      this.showFloatingSaveButton();
-
-      UI.toast('已进入多选模式，选择要保存的对照块');
-    },
-
-    // 退出多选模式
-    exitMultiSelectMode() {
-      if (!this._multiSelectMode) return;
-
-      this._multiSelectMode = false;
-      this._selectedBlocks.clear();
-
-      // 更新按钮文本
-      this.updateBiButtonText();
-
-      // 移除勾选框
-      this.removeCheckboxesFromPairs();
-
-      // 隐藏浮动保存按钮
-      this.hideFloatingSaveButton();
-
-      // 移除多选UI
-      if (this._multiSelectUI) {
-        this._multiSelectUI.remove();
-        this._multiSelectUI = null;
-      }
-
-      UI.toast('已退出多选模式');
-    },
-
-    // 更新双语按钮文本
-    updateBiButtonText() {
-      const biBtn = document.querySelector('[data-mode="bi"]');
-      if (biBtn) {
-        if (this._multiSelectMode) {
-          biBtn.textContent = '多选模式';
-          biBtn.classList.add('highlight');
-        } else {
-          biBtn.textContent = '双语对照';
-          biBtn.classList.remove('highlight');
-        }
-      }
-    },
-
-    // 为对照块添加勾选框
-    addCheckboxesToPairs() {
-      const pairs = document.querySelectorAll('.ao3x-pair');
-      pairs.forEach((pair, arrayIndex) => {
-        // 使用数组索引作为唯一标识符，而不是块的data-index
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.className = 'ao3x-multiselect-checkbox';
-        checkbox.dataset.blockIndex = String(arrayIndex);
-
-        const label = document.createElement('label');
-        label.className = 'ao3x-multiselect-label';
-        label.appendChild(checkbox);
-
-        pair.appendChild(label);
-
-        // 添加点击事件
-        checkbox.addEventListener('change', (e) => {
-          const pairIndex = String(arrayIndex);
-          console.log(`勾选框状态改变: pairIndex=${pairIndex}, checked=${e.target.checked}`);
-          if (e.target.checked) {
-            this._selectedBlocks.add(pairIndex);
-          } else {
-            this._selectedBlocks.delete(pairIndex);
-          }
-          console.log('当前选中的块:', Array.from(this._selectedBlocks));
-          this.updateFloatingSaveButton();
-        });
-
-        // 为整个对照块添加点击事件，但排除浮动保存按钮
-        pair.addEventListener('click', (e) => {
-          // 检查点击事件是否来自浮动保存按钮或其子元素
-          const saveButton = document.getElementById('ao3x-multiselect-save');
-          if (saveButton && (saveButton.contains(e.target) || e.target.closest('#ao3x-multiselect-save'))) {
-            return;
-          }
-          
-          if (e.target.type !== 'checkbox') {
-            checkbox.checked = !checkbox.checked;
-            checkbox.dispatchEvent(new Event('change'));
-          }
-        });
-      });
-    },
-
-    // 移除对照块的勾选框
-    removeCheckboxesFromPairs() {
-      const checkboxes = document.querySelectorAll('.ao3x-multiselect-checkbox');
-      const labels = document.querySelectorAll('.ao3x-multiselect-label');
-      checkboxes.forEach(cb => cb.remove());
-      labels.forEach(label => label.remove());
-    },
-
-    // 显示浮动保存按钮
-    showFloatingSaveButton() {
-      const button = document.createElement('button');
-      button.id = 'ao3x-multiselect-save';
-      button.className = 'ao3x-multiselect-save';
-      button.textContent = '保存选中部分';
-      button.style.display = 'none';
-
-      // 阻止事件冒泡但保持按钮功能
-      button.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.saveSelectedBlocksAsImages();
-      });
-      
-      // 阻止其他事件的冒泡
-      ['mousedown', 'mouseup', 'touchstart', 'touchend'].forEach(eventType => {
-        button.addEventListener(eventType, (e) => {
-          e.stopPropagation();
-        });
-      });
-
-      document.body.appendChild(button);
-    },
-
-    // 隐藏浮动保存按钮
-    hideFloatingSaveButton() {
-      const button = document.getElementById('ao3x-multiselect-save');
-      if (button) {
-        button.remove();
-      }
-    },
-
-    // 更新浮动保存按钮状态
-    updateFloatingSaveButton() {
-      const button = document.getElementById('ao3x-multiselect-save');
-      if (button) {
-        button.style.display = this._selectedBlocks.size > 0 ? 'block' : 'none';
-        button.textContent = `保存选中部分 (${this._selectedBlocks.size})`;
-      }
-    },
-
-    // 保存选中块为图片
-    async saveSelectedBlocksAsImages() {
-      if (this._selectedBlocks.size === 0) {
-        UI.toast('请先选择要保存的对照块');
-        return;
-      }
-
-      // 调试信息：查看所有可用的块和对照块
-      const allBlocks = document.querySelectorAll('.ao3x-block');
-      console.log('页面上所有可用的块:', Array.from(allBlocks).map(block => ({
-        index: block.getAttribute('data-index'),
-        hasPair: !!block.querySelector('.ao3x-pair')
-      })));
-      
-      // 调试信息：查看所有可用的对照块
-      const allPairs = document.querySelectorAll('.ao3x-pair');
-      console.log('页面上所有可用的对照块:', Array.from(allPairs).map(pair => ({
-        blockIndex: pair.querySelector('input[data-block-index]')?.getAttribute('data-block-index'),
-        hasContent: !!pair.querySelector('.orig') && !!pair.querySelector('.trans')
-      })));
-
-      // 修复查找逻辑：使用数组索引查找对照块
-      const selectedPairs = Array.from(this._selectedBlocks).map(pairIndex => {
-        // 查找带有指定data-block-index的对照块
-        const pair = document.querySelector(`.ao3x-pair input[data-block-index="${pairIndex}"]`)?.closest('.ao3x-pair');
-        console.log(`查找对照块索引 ${pairIndex}:`, {
-          pairFound: !!pair,
-          pair: pair,
-          pairIndex: pairIndex
-        });
-        return pair;
-      }).filter(pair => pair !== null);
-
-      console.log('选中的对照块:', {
-        selectedBlocks: Array.from(this._selectedBlocks),
-        foundPairs: selectedPairs.length,
-        pairs: selectedPairs
-      });
-
-      if (selectedPairs.length === 0) {
-        UI.toast('未找到选中的对照块');
-        return;
-      }
-
-      UI.toast('正在生成长图...');
-
-      try {
-        // 将多个对照块合并为一张长图
-        const imageData = await this.renderSelectedPairsAsLongImage(selectedPairs);
-        if (imageData) {
-          this.showImagePreview(imageData, `对照块长图_${selectedPairs.length}段`);
-          UI.toast('长图生成成功');
-        }
-      } catch (error) {
-        console.error('生成图片失败:', error);
-        UI.toast('生成图片失败，请重试');
-      }
-    },
-
-    // 将多个对照块渲染为长图
-    async renderSelectedPairsAsLongImage(selectedPairs) {
-      const TAKE = 10;
-      const MAX_WIDTH = 1080;
-      const PADDING = 12;
-      const BG_COLOR = '#ffffff';
-
-      const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-      const loadImage = (url) => new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => resolve(img);
-        img.onerror = reject;
-        img.crossOrigin = 'anonymous';
-        img.src = url;
-      });
-
-      // 确保html-to-image库已加载
-      await this.ensureHtmlToImageLoaded();
-
-      if (document.fonts && document.fonts.ready) {
-        try { await Promise.race([document.fonts.ready, sleep(1200)]); } catch {}
-      }
-
-      const nodes = selectedPairs.slice(0, TAKE);
-      if (!nodes.length) { throw new Error('没有选中的对照块'); }
-
-      const dpr = Math.min(window.devicePixelRatio || 1, 3);
-      const images = [];
-
-      for (let i = 0; i < nodes.length; i++) {
-        const node = nodes[i];
-        
-        // 临时隐藏多选框和边框
-        const checkbox = node.querySelector('.ao3x-multiselect-checkbox');
-        const label = node.querySelector('.ao3x-multiselect-label');
-        const originalCheckboxDisplay = checkbox ? checkbox.style.display : null;
-        const originalLabelDisplay = label ? label.style.display : null;
-        
-        if (checkbox) checkbox.style.display = 'none';
-        if (label) label.style.display = 'none';
-        
-        // 临时移除边框
-        const originalBorder = node.style.border;
-        const originalBorderRadius = node.style.borderRadius;
-        node.style.border = 'none';
-        node.style.borderRadius = '0';
-        
-        // 直接使用原始节点，参考简化脚本
-        const rect = node.getBoundingClientRect();
-        const width = Math.ceil(rect.width);
-        const pixelRatio = Math.min((MAX_WIDTH / width) || dpr, dpr);
-        
-        console.log('处理节点:', {
-          index: i,
-          width: width,
-          height: rect.height,
-          pixelRatio: pixelRatio
-        });
-
-        // 获取html-to-image库
-        const htmlToImageLib = this.getHtmlToImageLib();
-        if (!htmlToImageLib || !htmlToImageLib.toPng) {
-          // 恢复多选框显示和边框
-          if (checkbox) checkbox.style.display = originalCheckboxDisplay;
-          if (label) label.style.display = originalLabelDisplay;
-          node.style.border = originalBorder;
-          node.style.borderRadius = originalBorderRadius;
-          throw new Error('html-to-image库未正确加载');
-        }
-        
-        try {
-          // 简化调用，直接对原始节点截图
-          const dataUrl = await htmlToImageLib.toPng(node, {
-            backgroundColor: BG_COLOR,
-            pixelRatio,
-            cacheBust: true,
-            style: { 
-              width: width + 'px'
-            }
-          });
-          
-          console.log(`节点 ${i} 图片生成成功，dataUrl长度:`, dataUrl.length);
-          
-          const img = await loadImage(dataUrl);
-          images.push(img);
-        } finally {
-          // 恢复多选框显示和边框
-          if (checkbox) checkbox.style.display = originalCheckboxDisplay;
-          if (label) label.style.display = originalLabelDisplay;
-          node.style.border = originalBorder;
-          node.style.borderRadius = originalBorderRadius;
-        }
-        
-        await sleep(50);
-      }
-
-      const rawMaxWidth = Math.max(...images.map(img => img.width));
-      const canvasWidth = Math.min(rawMaxWidth, MAX_WIDTH);
-      let totalHeight = 0;
-      const scaled = images.map(img => {
-        const scale = canvasWidth / img.width;
-        const w = Math.round(img.width * scale);
-        const h = Math.round(img.height * scale);
-        totalHeight += h;
-        return { img, w, h };
-      });
-      totalHeight += PADDING * Math.max(0, scaled.length - 1);
-
-      const canvas = document.createElement('canvas');
-      canvas.width = canvasWidth;
-      canvas.height = totalHeight;
-      const ctx = canvas.getContext('2d');
-      ctx.imageSmoothingEnabled = true;
-      ctx.fillStyle = BG_COLOR;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      let y = 0;
-      for (const s of scaled) {
-        ctx.drawImage(s.img, 0, y, s.w, s.h);
-        y += s.h + PADDING;
-      }
-
-      return new Promise(resolve => {
-        canvas.toBlob(blob => {
-          resolve(blob);
-        }, 'image/png');
-      });
-    },
-
-    // 确保html-to-image库已加载
-    async ensureHtmlToImageLoaded() {
-      console.log('检查html-to-image库加载状态...');
-      
-      // 检查是否已有可用的toPng函数
-      if (this.getHtmlToImageLib()) {
-        console.log('html-to-image库已加载');
-        return;
-      }
-
-      return new Promise((resolve, reject) => {
-        console.log('开始加载html-to-image库...');
-        
-        // 使用页面上下文注入脚本
-        const scriptContent = `
-          (function() {
-            if (window.htmlToImage) {
-              console.log('html-to-image库已存在');
-              return;
-            }
-            
-            var script = document.createElement('script');
-            script.src = 'https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.min.js';
-            script.onload = function() {
-              console.log('html-to-image库加载完成');
-              console.log('window.htmlToImage:', typeof window.htmlToImage);
-              console.log('window.htmlToImage.toPng:', typeof window.htmlToImage?.toPng);
-              
-              if (window.htmlToImage && window.htmlToImage.toPng) {
-                console.log('✓ html-to-image库加载成功');
-                
-                // 尝试将库暴露给userscript上下文
-                try {
-                  // 为Tampermonkey创建一个全局引用
-                  if (typeof GM_setValue !== 'undefined') {
-                    // Tampermonkey环境
-                    window.htmlToImageLib = window.htmlToImage;
-                  }
-                } catch (e) {
-                  console.log('无法为Tampermonkey暴露库:', e);
-                }
-                
-                // 通过自定义事件通知
-                document.dispatchEvent(new CustomEvent('htmlToImageLoaded', {
-                  detail: { library: window.htmlToImage }
-                }));
-              } else {
-                console.error('✗ html-to-image库加载失败');
-                document.dispatchEvent(new CustomEvent('htmlToImageLoadFailed'));
-              }
-            };
-            script.onerror = function() {
-              console.error('html-to-image库脚本加载失败');
-              document.dispatchEvent(new CustomEvent('htmlToImageLoadFailed'));
-            };
-            document.head.appendChild(script);
-          })();
-        `;
-        
-        const script = document.createElement('script');
-        script.textContent = scriptContent;
-        document.head.appendChild(script);
-        
-        // 监听加载完成事件
-        const handleLoadSuccess = (event) => {
-          document.removeEventListener('htmlToImageLoaded', handleLoadSuccess);
-          document.removeEventListener('htmlToImageLoadFailed', handleLoadFailed);
-          
-          // 如果事件详情中有库引用，尝试保存它
-          if (event.detail && event.detail.library) {
-            console.log('从事件详情中获取库引用');
-            // 在userscript上下文中保存库引用
-            try {
-              window.htmlToImageLib = event.detail.library;
-            } catch (e) {
-              console.log('无法保存库引用:', e);
-            }
-          }
-          
-          resolve();
-        };
-        
-        const handleLoadFailed = () => {
-          document.removeEventListener('htmlToImageLoaded', handleLoadSuccess);
-          document.removeEventListener('htmlToImageLoadFailed', handleLoadFailed);
-          reject(new Error('html-to-image库加载失败'));
-        };
-        
-        document.addEventListener('htmlToImageLoaded', handleLoadSuccess);
-        document.addEventListener('htmlToImageLoadFailed', handleLoadFailed);
-        
-        // 超时处理
-        const self = this;
-        setTimeout(() => {
-          document.removeEventListener('htmlToImageLoaded', handleLoadSuccess);
-          document.removeEventListener('htmlToImageLoadFailed', handleLoadFailed);
-          if (!self.getHtmlToImageLib()) {
-            reject(new Error('html-to-image库加载超时'));
-          }
-        }, 10000);
-      });
-    },
-
-    // 获取html-to-image库
-    getHtmlToImageLib() {
-      // 首先尝试通过unsafeWindow访问（如果可用）
-      try {
-        if (typeof unsafeWindow !== 'undefined' && unsafeWindow.htmlToImage && unsafeWindow.htmlToImage.toPng) {
-          console.log('通过unsafeWindow找到html-to-image库');
-          return unsafeWindow.htmlToImage;
-        }
-      } catch (e) {
-        console.log('unsafeWindow不可用');
-      }
-      
-      const possibleGlobals = [
-        'htmlToImage',
-        'htmlToImageLib', 
-        'htmlToImageLibrary',
-        'HtmlToImage',
-        'HTMLToImage'
-      ];
-      
-      // 首先检查已知全局变量
-      for (const globalName of possibleGlobals) {
-        const global = window[globalName];
-        if (global && global.toPng) {
-          console.log(`找到库: ${globalName}`);
-          return global;
-        }
-      }
-      
-      // 如果没找到，检查window上所有包含html或image的属性
-      const allWindowProps = Object.keys(window);
-      const htmlImageProps = allWindowProps.filter(prop => 
-        prop.toLowerCase().includes('html') && prop.toLowerCase().includes('image')
-      );
-      
-      for (const prop of htmlImageProps) {
-        const global = window[prop];
-        if (global && global.toPng) {
-          console.log(`找到库: ${prop} (动态检测)`);
-          return global;
-        }
-      }
-      
-      // 尝试通过页面上下文访问
-      try {
-        const pageContextEval = function() {
-          return window.htmlToImage;
-        };
-        const pageLib = eval(`(${pageContextEval})()`);
-        if (pageLib && pageLib.toPng) {
-          console.log('通过页面上下文找到html-to-image库');
-          return pageLib;
-        }
-      } catch (e) {
-        console.log('页面上下文访问失败:', e);
-      }
-      
-      // 最后尝试通过document.currentScript等高级方式检测
-      try {
-        // 检查是否有任何脚本标签包含html-to-image
-        const scripts = document.querySelectorAll('script');
-        for (const script of scripts) {
-          if (script.src && script.src.includes('html-to-image')) {
-            console.log('找到html-to-image脚本，但需要手动检查导出');
-            // 这里可能需要更复杂的逻辑来获取导出
-          }
-        }
-      } catch (e) {
-        console.log('高级检测失败:', e);
-      }
-      
-      return null;
-    },
-
-    // 将对照块渲染为图片
-    async renderPairAsImage(pairElement) {
-      const MAX_WIDTH = 1080;
-      const BG_COLOR = '#ffffff';
-
-      const loadImage = (url) => new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => resolve(img);
-        img.onerror = reject;
-        img.crossOrigin = 'anonymous';
-        img.src = url;
-      });
-
-      // 确保html-to-image库已加载
-      await this.ensureHtmlToImageLoaded();
-
-      // 创建临时容器进行样式清理
-      const tempContainer = document.createElement('div');
-      tempContainer.style.position = 'absolute';
-      tempContainer.style.left = '-9999px';
-      tempContainer.style.top = '-9999px';
-      tempContainer.style.backgroundColor = BG_COLOR;
-      tempContainer.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-      tempContainer.style.fontSize = '16px';
-      tempContainer.style.lineHeight = '1.6';
-      tempContainer.style.color = '#0b0b0d';
-      tempContainer.style.padding = '20px';
-      tempContainer.style.boxSizing = 'border-box';
-      
-      const clonedPair = pairElement.cloneNode(true);
-      
-      // 调试信息：检查克隆的内容
-      console.log('原始对照块信息:', {
-        textContent: pairElement.textContent?.substring(0, 100),
-        innerHTML: pairElement.innerHTML?.substring(0, 200)
-      });
-      
-      console.log('克隆对照块信息:', {
-        textContent: clonedPair.textContent?.substring(0, 100),
-        innerHTML: clonedPair.innerHTML?.substring(0, 200)
-      });
-      
-      // 移除勾选框
-      const checkbox = clonedPair.querySelector('.ao3x-multiselect-checkbox');
-      const label = clonedPair.querySelector('.ao3x-multiselect-label');
-      if (checkbox) checkbox.remove();
-      if (label) label.remove();
-      
-      // 清理样式
-      clonedPair.style.border = 'none';
-      clonedPair.style.boxShadow = 'none';
-      clonedPair.style.borderRadius = '0';
-      clonedPair.style.margin = '0';
-      clonedPair.style.background = 'transparent';
-      
-      // 设置原文和译文样式
-      const origElement = clonedPair.querySelector('.orig');
-      const transElement = clonedPair.querySelector('.trans');
-      
-      if (origElement) {
-        origElement.style.color = '#374151';
-        origElement.style.lineHeight = '1.6';
-        origElement.style.marginBottom = '12px';
-        origElement.style.paddingBottom = '12px';
-        origElement.style.borderBottom = '1px solid #e5e5e5';
-      }
-      
-      if (transElement) {
-        transElement.style.color = '#111';
-        transElement.style.lineHeight = '1.7';
-        transElement.style.marginTop = '0';
-        transElement.style.paddingTop = '0';
-        transElement.style.borderTop = 'none';
-      }
-      
-      tempContainer.appendChild(clonedPair);
-      document.body.appendChild(tempContainer);
-      
-      // 调试信息：检查添加到容器后的内容
-      console.log('添加到容器后的对照块信息:', {
-        textContent: clonedPair.textContent?.substring(0, 100),
-        innerHTML: clonedPair.innerHTML?.substring(0, 200)
-      });
-      
-      console.log('完整临时容器信息:', {
-        textContent: tempContainer.textContent?.substring(0, 100),
-        innerHTML: tempContainer.innerHTML?.substring(0, 200)
-      });
-      
-      // 等待一小段时间确保样式应用
-      await sleep(100);
-      
-      const rect = tempContainer.getBoundingClientRect();
-      const width = Math.ceil(rect.width);
-      const dpr = Math.min(window.devicePixelRatio || 1, 3);
-      const pixelRatio = Math.min((MAX_WIDTH / width) || dpr, dpr);
-      
-      // 调试信息
-      console.log('临时容器信息:', {
-        width: rect.width,
-        height: rect.height,
-        content: tempContainer.textContent?.substring(0, 100),
-        innerHTML: tempContainer.innerHTML?.substring(0, 200)
-      });
-
-      // 获取html-to-image库
-      const htmlToImageLib = this.getHtmlToImageLib();
-      if (!htmlToImageLib || !htmlToImageLib.toPng) {
-        throw new Error('html-to-image库未正确加载');
-      }
-      
-      const dataUrl = await htmlToImageLib.toPng(tempContainer, {
-        backgroundColor: BG_COLOR,
-        pixelRatio,
-        cacheBust: true,
-        style: { 
-          width: width + 'px',
-          visibility: 'visible',
-          opacity: '1',
-          display: 'block'
-        },
-        filter: (node) => {
-          // 确保不过滤任何节点
-          return true;
-        }
-      });
-
-      document.body.removeChild(tempContainer);
-      
-      return new Promise(resolve => {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          canvas.width = img.width;
-          canvas.height = img.height;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0);
-          canvas.toBlob(blob => {
-            resolve(blob);
-          }, 'image/png');
-        };
-        img.src = dataUrl;
-      });
-    },
-
-    
-    // 显示图片预览
-    showImagePreview(imageBlob, fileName) {
-      const url = URL.createObjectURL(imageBlob);
-      const modal = document.createElement('div');
-      modal.className = 'ao3x-image-preview-modal';
-      
-      // iOS Safari优化：使用内联样式避免CSS加载问题
-      modal.style.cssText = `
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: rgba(0, 0, 0, 0.9);
-        z-index: 999999;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        -webkit-overflow-scrolling: touch;
-        -webkit-transform: translateZ(0);
-        transform: translateZ(0);
-        opacity: 0;
-        transition: opacity 0.3s ease;
-      `;
-      
-      modal.innerHTML = `
-        <div style="
-          background: white;
-          border-radius: 12px;
-          max-width: 90%;
-          max-height: 90%;
-          overflow: hidden;
-          -webkit-overflow-scrolling: touch;
-          -webkit-transform: translateZ(0);
-          transform: translateZ(0);
-          box-shadow: 0 10px 40px rgba(0,0,0,0.3);
-        ">
-          <div style="
-            padding: 16px 20px;
-            border-bottom: 1px solid #eee;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            background: white;
-            border-radius: 12px 12px 0 0;
-          ">
-            <span style="font-size: 16px; color: #333; font-weight: 600;">${fileName}</span>
-            <button style="
-              background: none;
-              border: none;
-              font-size: 28px;
-              cursor: pointer;
-              color: #666;
-              padding: 0;
-              width: 40px;
-              height: 40px;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              -webkit-user-select: none;
-              user-select: none;
-              border-radius: 50%;
-              transition: all 0.2s ease;
-            " onclick="this.closest('.ao3x-image-preview-modal').remove()">×</button>
-          </div>
-          <div style="
-            max-height: 70vh;
-            overflow-y: auto;
-            -webkit-overflow-scrolling: touch;
-            background: #f8f9fa;
-          ">
-            <img src="${url}" alt="${fileName}" style="
-              max-width: 100%;
-              height: auto;
-              display: block;
-              -webkit-user-select: none;
-              user-select: none;
-              -webkit-user-drag: none;
-              pointer-events: none;
-              background: white;
-            " />
-          </div>
-          <div style="
-            padding: 16px 20px;
-            border-top: 1px solid #eee;
-            display: flex;
-            gap: 12px;
-            background: white;
-            border-radius: 0 0 12px 12px;
-          ">
-            <button style="
-              background: #007aff;
-              color: white;
-              border: none;
-              padding: 12px 24px;
-              border-radius: 8px;
-              font-size: 16px;
-              cursor: pointer;
-              -webkit-user-select: none;
-              user-select: none;
-              -webkit-appearance: none;
-              appearance: none;
-              font-weight: 500;
-              transition: all 0.2s ease;
-            " onclick="Controller.downloadImage('${url}', '${fileName}')">下载图片</button>
-            <button style="
-              background: #34c759;
-              color: white;
-              border: none;
-              padding: 12px 24px;
-              border-radius: 8px;
-              font-size: 16px;
-              cursor: pointer;
-              -webkit-user-select: none;
-              user-select: none;
-              -webkit-appearance: none;
-              appearance: none;
-              touch-action: manipulation;
-              font-weight: 500;
-              transition: all 0.2s ease;
-            " onmousedown="Controller.startImageLongPress(this)" ontouchstart="Controller.startImageLongPress(this)">长按保存</button>
-          </div>
-        </div>
-      `;
-
-      // iOS Safari特殊处理：先隐藏，添加到DOM，然后显示
-      modal.style.display = 'none';
-      document.body.appendChild(modal);
-      
-      // 强制重绘并显示
-      requestAnimationFrame(() => {
-        modal.style.display = 'flex';
-        
-        // 触发重绘确保iOS Safari正确渲染
-        modal.offsetHeight;
-        modal.style.opacity = '1';
-        
-        // iOS设备特殊处理
-        if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
-          // 强制滚动到顶部
-          setTimeout(() => {
-            modal.scrollTop = 0;
-            const content = modal.querySelector('div[style*="background: white"]');
-            if (content) {
-              content.scrollTop = 0;
-            }
-            
-            // 再次强制重绘
-            modal.style.display = 'none';
-            modal.offsetHeight;
-            modal.style.display = 'flex';
-          }, 50);
-        }
-      });
-
-      // 点击背景关闭
-      modal.addEventListener('click', (e) => {
-        if (e.target === modal) {
-          modal.style.opacity = '0';
-          setTimeout(() => {
-            modal.remove();
-            URL.revokeObjectURL(url);
-          }, 300);
-        }
-      });
-      
-      // iOS Safari特殊处理：阻止默认的缩放和滚动行为
-      modal.addEventListener('touchmove', (e) => {
-        if (e.target === modal) {
-          e.preventDefault();
-        }
-      }, { passive: false });
-    },
-
-    // 下载图片
-    downloadImage(url, fileName) {
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${fileName}.png`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      UI.toast(`已下载 ${fileName}.png`);
-    },
-
-    // 开始图片长按
-    startImageLongPress(button) {
-      // 阻止文本选择和默认行为
-      const preventSelection = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      };
-      
-      // 添加事件监听器阻止文本选择
-      button.addEventListener('selectstart', preventSelection);
-      button.addEventListener('mousedown', preventSelection);
-      button.addEventListener('touchstart', preventSelection);
-      
-      // 为iOS添加额外保护
-      button.style.userSelect = 'none';
-      button.style.webkitUserSelect = 'none';
-      button.style.touchCallout = 'none';
-      button.style.webkitTouchCallout = 'none';
-      button.style.touchAction = 'manipulation';
-      
-      let longPressTimer = setTimeout(() => {
-        const modal = button.closest('.ao3x-image-preview-modal');
-        const img = modal.querySelector('img');
-        if (img) {
-          const url = img.src;
-          const fileName = modal.querySelector('div[style*="font-size: 16px"]').textContent;
-          this.downloadImage(url, fileName);
-        }
-      }, 1000);
-
-      const cancelLongPress = () => {
-        clearTimeout(longPressTimer);
-        // 移除事件监听器
-        button.removeEventListener('selectstart', preventSelection);
-        button.removeEventListener('mousedown', preventSelection);
-        button.removeEventListener('touchstart', preventSelection);
-        // 恢复样式
-        button.style.userSelect = '';
-        button.style.webkitUserSelect = '';
-        button.style.touchCallout = '';
-        button.style.webkitTouchCallout = '';
-        button.style.touchAction = '';
-      };
-
-      button.addEventListener('mouseup', cancelLongPress);
-      button.addEventListener('mouseleave', cancelLongPress);
-      button.addEventListener('touchend', cancelLongPress);
-      button.addEventListener('touchcancel', cancelLongPress);
-    },
 
     // 获取作品名和章节名
     getWorkInfo() {
@@ -2514,72 +1428,119 @@
       };
     },
 
-    // 下载翻译为TXT文件
-    downloadTranslation() {
-      const cacheInfo = TransStore.getCacheInfo();
-      if (!cacheInfo.hasCache || cacheInfo.completed === 0) {
-        UI.toast('没有可下载的翻译内容');
-        return;
+// 下载翻译为TXT文件（完整替换此函数）
+downloadTranslation() {
+  // 1) 基本检查
+  const cacheInfo = TransStore.getCacheInfo && TransStore.getCacheInfo();
+  if (!cacheInfo || !cacheInfo.hasCache || !cacheInfo.completed) {
+    UI.toast('没有可下载的翻译内容');
+    return;
+  }
+
+  // 2) 生成文件名
+  const info = this.getWorkInfo ? this.getWorkInfo() : {};
+  const workTitle = (info && info.workTitle) || '作品';
+  const chapterTitle = (info && info.chapterTitle) || '章节';
+  const fileName = `${workTitle}-${chapterTitle}.txt`;
+
+  // 3) 汇总正文
+  let fullText = '';
+  const total = cacheInfo.total || 0;
+  for (let i = 0; i < total; i++) {
+    const translation = TransStore.get && TransStore.get(String(i));
+    if (!translation) continue;
+
+    let plain = '';
+    try {
+      if (this.extractTextWithStructure) {
+        plain = this.extractTextWithStructure(translation) || '';
+      } else {
+        const div = document.createElement('div');
+        div.innerHTML = translation;
+        plain = (div.textContent || '').replace(/\r?\n/g, '\n').trim();
       }
+    } catch (_) {}
+    if (plain) fullText += plain + '\n\n';
+  }
+  fullText = fullText.trim();
+  if (!fullText) {
+    UI.toast('翻译内容为空');
+    return;
+  }
 
-      const { workTitle, chapterTitle } = this.getWorkInfo();
-      const fileName = `${workTitle}-${chapterTitle}.txt`;
+  // 4) EvansBrowser / iOS Safari 家族 → 走云端“两步法”（POST→GET）；其他浏览器保留 Blob
+  const WORKER_ORIGIN = 'https://txt.jagerze.tech';
 
-      // 收集所有翻译内容
-      let fullText = '';
-      const total = cacheInfo.total;
+// —— 只针对 EvansBrowser，其他一律走 Blob ——
+// 你给的精确 UA（可留作备用精确等号匹配）
+const EVANS_FULL =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) ' +
+  'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 ' +
+  'Mobile/15E148 Safari/604.1 EvansBrowser/1.0';
 
-      for (let i = 0; i < total; i++) {
-        const translation = TransStore.get(String(i));
-        if (translation) {
-          // 智能提取文本，保留段落结构
-          const text = this.extractTextWithStructure(translation);
-          if (text) {
-            fullText += text + '\n\n';
-          }
+const ua = navigator.userAgent || '';
+
+// 条件1：包含 EvansBrowser/<版本号>（推荐）
+const hasEvansToken = /\bEvansBrowser\/\d+(?:\.\d+)*\b/i.test(ua);
+
+// 条件2：精确等号匹配整串（可选补充，避免极端裁剪导致 token 丢失时你仍能识别）
+const isExactEvansUA = ua.trim() === EVANS_FULL;
+
+// 最终：只有 Evans 才用云端两步法
+const shouldUseCloud = hasEvansToken || isExactEvansUA;
+
+  if (shouldUseCloud) {
+    // —— 两步法：1) POST 文本到 /api/upload → 2) 跳转到返回的 GET 下载链接 ——
+    (async () => {
+      try {
+        UI.toast('1/2 上传到云端…');
+        const body = new URLSearchParams();
+        body.set('text', fullText);
+        body.set('filename', fileName);
+
+        const res = await fetch(`${WORKER_ORIGIN}/api/upload`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body
+        });
+
+        if (!res.ok) {
+          const err = await res.text().catch(() => res.statusText);
+          UI.toast('上传失败：' + err);
+          return;
         }
+
+        const data = await res.json().catch(() => null);
+        if (!data || !data.url) {
+          UI.toast('上传返回无下载链接');
+          return;
+        }
+
+        UI.toast('2/2 跳转下载…');
+        location.href = data.url; // 导航到 GET 链接触发下载
+      } catch (e) {
+        UI.toast('异常：' + (e && e.message ? e.message : String(e)));
       }
+    })();
+    return; // 重要：不要再继续走到 Blob 分支
+  }
 
-      if (!fullText.trim()) {
-        UI.toast('翻译内容为空');
-        return;
-      }
-
-      // ★ 根据 UA 选择下载方式（EvansBrowser 走 CF Workers 表单 POST）
-      const ua = navigator.userAgent || '';
-      const isEvans = /\bEvansBrowser\/\d/i.test(ua);  // 放宽匹配，避免等号匹配失败
-
-      if (isEvans) {
-        UI.toast('EvansBrowser → 走 Cloudflare Workers（POST）');
-        const action = `https://txt.jagerze.tech/cd-post/${encodeURIComponent(fileName)}`;
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.action = action;
-        form.style.display = 'none';
-
-        const textarea = document.createElement('textarea');
-        textarea.name = 'text';   // Workers 从这个字段取文本
-        textarea.value = fullText;
-
-        form.appendChild(textarea);
-        document.body.appendChild(form);
-        form.submit();
-        setTimeout(() => form.remove(), 2000);
-        return; // 别继续走 Blob 分支
-      }
-
-      // ↓ 其他浏览器保留原来的 Blob 下载
-      const blob = new Blob([fullText], { type: 'text/plain;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      UI.toast(`已下载 ${fileName}`);
-    },
+  // 5) 其他浏览器：保留原来的 Blob 下载
+  try {
+    const blob = new Blob([fullText], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    UI.toast(`已下载 ${fileName}`);
+  } catch (e) {
+    UI.toast('本地下载失败：' + (e && e.message ? e.message : String(e)));
+  }
+},
 
     // 智能提取文本，保留段落结构
     extractTextWithStructure(html) {
