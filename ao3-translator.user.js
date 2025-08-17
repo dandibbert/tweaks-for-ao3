@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译（移动端 Safari / Tampermonkey）
 // @namespace    https://ao3-translate.example
-// @version      0.5.9
+// @version      0.6.9
 // @description  精确tiktoken计数；英→中默认输出≈0.7×输入；最大化单次输入、最小化请求数；首块实测动态校准并对未启动块合包；有序流式不跳动；OpenAI-compatible；流式/非流式；finish_reason智能；红白优雅UI；计划面板显示真实in tokens。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -21,13 +21,13 @@
   const settings = {
     defaults: {
       api: { baseUrl: '', path: 'v1/chat/completions', key: '' },
-      model: { id: '', contextWindow: 8192 },
-      gen: { maxTokens: 2048, temperature: 0.2, top_p: 1 },
+      model: { id: '', contextWindow: 16000 },
+      gen: { maxTokens: 7000, temperature: 0.7, top_p: 1 },
       prompt: {
         system: '你是专业的文学翻译助手。请保持 AO3 文本结构、段落层次、行内格式（粗体、斜体、链接），名字与术语一致，语气自然流畅。',
-        userTemplate: '请将以下 AO3 正文完整翻译为中文，保持 HTML 结构与行内标记，仅替换可见文本内容：\n{{content}}\n（请直接返回 HTML 片段，不要使用代码块或转义。）'
+        userTemplate: '请将以下 AO3 正文完整翻译为中文，人名保持原文，保持 HTML 结构与行内标记，仅替换可见文本内容：\n{{content}}\n（请直接返回 HTML 片段，不要使用代码块或转义。）'
       },
-      stream: { enabled: true, minFrameMs: 40 },
+      stream: { enabled: true, minFrameMs: 30 },
       concurrency: 3,
       debug: false,
       ui: { fontSize: 16 }, // 译文字体大小
@@ -36,9 +36,10 @@
         trySingleShotOnce: true,
         singleShotSlackRatio: 0.15,
         packSlack: 0.95,          // 更激进一点
-        ratioOutPerIn: 0.7        // ★ 英->中常见：输出token约为输入的70%
+        ratioOutPerIn: 1        // ★ 英->中常见：输出token约为输入的70%
       },
-      watchdog: { idleMs: 10000, hardMs: 90000, maxRetry: 1 }
+      watchdog: { idleMs: 10000, hardMs: 90000, maxRetry: 1 },
+      download: { workerUrl: '' }
     },
     get() {
       try {
@@ -141,10 +142,24 @@
 
       // iOS Safari文本选择防护
       const preventSelection = (e) => {
-        if (e.target.closest('.ao3x-btn')) {
-          e.preventDefault();
-          e.stopPropagation();
-          return false;
+        // 检查是否有target和closest方法
+        if (e.target && typeof e.target.closest === 'function') {
+          if (e.target.closest('.ao3x-btn')) {
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
+          }
+        } else if (e.target) {
+          // 向上遍历DOM树查找匹配的元素（兼容性fallback）
+          let element = e.target;
+          while (element && element !== document) {
+            if (element.classList && element.classList.contains('ao3x-btn')) {
+              e.preventDefault();
+              e.stopPropagation();
+              return false;
+            }
+            element = element.parentNode;
+          }
         }
       };
 
@@ -288,6 +303,10 @@
               <label>译文字体大小 <span class="ao3x-hint">px</span></label>
               <input id="ao3x-font-size" type="number" min="12" max="24" value="16"/>
             </div>
+            <div class="ao3x-field">
+              <label>下载服务URL</label>
+              <input id="ao3x-download-worker" type="text" placeholder=""/>
+            </div>
             <div class="ao3x-switches">
               <label class="ao3x-switch">
                 <input id="ao3x-stream" type="checkbox" checked/>
@@ -337,6 +356,7 @@
       $('#ao3x-idle').value = String(s.watchdog.idleMs); $('#ao3x-hard').value = String(s.watchdog.hardMs); $('#ao3x-retry').value = String(s.watchdog.maxRetry);
       $('#ao3x-ratio').value = String(s.planner.ratioOutPerIn);
       $('#ao3x-font-size').value = String(s.ui?.fontSize || 16);
+      $('#ao3x-download-worker').value = s.download?.workerUrl || '';
     },
     buildToolbar() {
       const bar = document.createElement('div');
@@ -807,6 +827,64 @@
         border-radius:6px;color:var(--c-muted);
       }
 
+      /* 块选择控制 */
+      .ao3x-block-controls{
+        display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;
+      }
+      .ao3x-btn-mini{
+        background:var(--c-soft);color:var(--c-fg);border:1px solid var(--c-border);
+        border-radius:6px;padding:4px 8px;font-size:11px;font-weight:500;
+        cursor:pointer;transition:all .2s;
+      }
+      .ao3x-btn-mini:hover{
+        background:var(--c-accent);color:white;transform:translateY(-1px);
+      }
+      .ao3x-btn-primary-mini{
+        background:var(--c-accent);color:white;border-color:var(--c-accent);
+      }
+      .ao3x-btn-primary-mini:hover{
+        background:#9a0000;
+      }
+
+      /* 块复选框 */
+      .ao3x-block-checkbox{
+        display:inline-flex;align-items:center;cursor:pointer;
+        margin-right:8px;position:relative;
+      }
+      .ao3x-block-checkbox input{
+        position:absolute;opacity:0;cursor:pointer;height:0;width:0;
+      }
+      .ao3x-block-checkbox .checkmark{
+        width:16px;height:16px;background:var(--c-soft);
+        border:1px solid var(--c-border);border-radius:4px;
+        position:relative;transition:all .2s;
+      }
+      .ao3x-block-checkbox:hover .checkmark{
+        background:var(--c-accent);border-color:var(--c-accent);
+      }
+      .ao3x-block-checkbox input:checked ~ .checkmark{
+        background:var(--c-accent);border-color:var(--c-accent);
+      }
+      .ao3x-block-checkbox .checkmark::after{
+        content:'';position:absolute;display:none;
+        left:5px;top:2px;width:3px;height:6px;
+        border:solid white;border-width:0 2px 2px 0;
+        transform:rotate(45deg);
+      }
+      .ao3x-block-checkbox input:checked ~ .checkmark::after{
+        display:block;
+      }
+
+      /* 调整计划面板行样式以适应复选框 */
+      .ao3x-plan .row{
+        display:flex;align-items:center;font-size:12px;color:#4b5563;
+        padding:6px 0;border-top:1px solid var(--c-border);
+      }
+      .ao3x-plan .row:first-of-type{border-top:none}
+      .ao3x-plan .row b{
+        margin-right:8px;
+      }
+
 
     `);
   }
@@ -832,6 +910,9 @@
       },
       ui: {
         fontSize: Math.max(12, Math.min(24, parseInt($('#ao3x-font-size', panel).value || cur.ui?.fontSize || 16, 10)))
+      },
+      download: {
+        workerUrl: ($('#ao3x-download-worker', panel).value || cur.download?.workerUrl || '').trim()
       }
     };
   }
@@ -854,9 +935,20 @@
       const text = stripHtmlToText(p.text||p.html);
       const head = text.slice(0,48); const tail = text.slice(-48);
       const estIn = p.inTok != null ? p.inTok : 0;
-      return `<div class="row"><b>#${i}</b> <span class="ao3x-small">in≈${estIn}</span> ｜ <span class="ao3x-small">开头：</span>${escapeHTML(head)} <span class="ao3x-small">…结尾：</span>${escapeHTML(tail)}</div>`;
+      return `<div class="row"><label class="ao3x-block-checkbox"><input type="checkbox" data-block-index="${i}"><span class="checkmark"></span></label><b>#${i}</b> <span class="ao3x-small">in≈${estIn}</span> ｜ <span class="ao3x-small">开头：</span>${escapeHTML(head)} <span class="ao3x-small">…结尾：</span>${escapeHTML(tail)}</div>`;
     }).join('');
-    box.innerHTML = `<h4>切块计划：共 ${plan.length} 块</h4>${rows}<div class="ao3x-kv" id="ao3x-kv"></div>`;
+    const controls = `
+      <div class="ao3x-block-controls">
+        <button id="ao3x-select-all" class="ao3x-btn-mini">全选</button>
+        <button id="ao3x-select-none" class="ao3x-btn-mini">取消全选</button>
+        <button id="ao3x-select-invert" class="ao3x-btn-mini">反选</button>
+        <button id="ao3x-retry-selected" class="ao3x-btn-mini ao3x-btn-primary-mini">重试选中</button>
+      </div>
+    `;
+    box.innerHTML = `<h4>切块计划：共 ${plan.length} 块</h4>${controls}${rows}<div class="ao3x-kv" id="ao3x-kv"></div>`;
+    
+    // 绑定控制按钮事件
+    bindBlockControlEvents(box);
   }
   function updateKV(kv){ const k=$('#ao3x-kv'); if(!k) return; k.innerHTML = Object.entries(kv).map(([k,v])=>`<span>${k}: ${escapeHTML(String(v))}</span>`).join(''); }
 
@@ -941,6 +1033,29 @@
     return parts;
   }
 
+  /* ================= Finish Reason Handler ================= */
+  function handleFinishReason(finishReason, label) {
+    if (!finishReason) return; // null 或 undefined，不处理
+    
+    const reasonMap = {
+      'stop': '正常完成',
+      'length': '长度限制（将自动重试）',
+      'content_filter': '内容被过滤',
+      'tool_calls': '工具调用完成',
+      'function_call': '函数调用完成',
+      'recitation': '引用检测触发',
+      'safety': '安全检查触发',
+      'other': '其他原因完成'
+    };
+    
+    // 只对非正常完成的情况显示提示
+    if (finishReason !== 'stop' && finishReason !== 'length') {
+      const reason = reasonMap[finishReason] || `未知原因: ${finishReason}`;
+      UI.toast(`${label} 非正常完成: ${reason}`);
+      d('finish_reason:abnormal', {label, finishReason, reason});
+    }
+  }
+
   /* ================= OpenAI-compatible + SSE ================= */
   function resolveEndpoint(baseUrl, apiPath){ if(!baseUrl) throw new Error('请在设置中填写 Base URL'); const hasV1=/\/v1\//.test(baseUrl); return hasV1? baseUrl : `${trimSlash(baseUrl)}/${trimSlash(apiPath||'v1/chat/completions')}`; }
   function resolveModelsEndpoint(baseUrl){ if(!baseUrl) throw new Error('请填写 Base URL'); const m=baseUrl.match(/^(.*?)(\/v1\/.*)$/); return m? `${m[1]}/v1/models` : `${trimSlash(baseUrl)}/v1/models`; }
@@ -962,6 +1077,10 @@
         return;
       } catch (e) {
         d('chat:error', {label, attempt, error: e.message});
+        // 检查是否是超时错误，如果是则显示toast提示
+        if (e.message && (e.message.includes('idle-timeout') || e.message.includes('hard-timeout'))) {
+          UI.toast(`块 ${label} 因超时失败`);
+        }
         if (attempt > (cfg.maxRetry||0)) { onError && onError(e); return; }
         d('chat:retrying', {label, attemptNext: attempt+1});
         await sleep(500 + Math.random()*700);
@@ -1354,9 +1473,20 @@
     const rows = plan.map((p,i)=>{
       const text = stripHtmlToText(p.text||p.html);
       const head = text.slice(0,48); const tail = text.slice(-48);
-      return `<div class="row"><b>#${i}</b> <span class="ao3x-small">in≈${p.inTok||0}</span> ｜ <span class="ao3x-small">开头：</span>${escapeHTML(head)} <span class="ao3x-small">…结尾：</span>${escapeHTML(tail)}</div>`;
+      return `<div class="row"><label class="ao3x-block-checkbox"><input type="checkbox" data-block-index="${i}"><span class="checkmark"></span></label><b>#${i}</b> <span class="ao3x-small">in≈${p.inTok||0}</span> ｜ <span class="ao3x-small">开头：</span>${escapeHTML(head)} <span class="ao3x-small">…结尾：</span>${escapeHTML(tail)}</div>`;
     }).join('');
-    box.innerHTML = `<h4>切块计划：共 ${plan.length} 块</h4>${rows}<div class="ao3x-kv" id="ao3x-kv"></div>`;
+    const controls = `
+      <div class="ao3x-block-controls">
+        <button id="ao3x-select-all" class="ao3x-btn-mini">全选</button>
+        <button id="ao3x-select-none" class="ao3x-btn-mini">取消全选</button>
+        <button id="ao3x-select-invert" class="ao3x-btn-mini">反选</button>
+        <button id="ao3x-retry-selected" class="ao3x-btn-mini ao3x-btn-primary-mini">重试选中</button>
+      </div>
+    `;
+    box.innerHTML = `<h4>切块计划：共 ${plan.length} 块</h4>${controls}${rows}<div class="ao3x-kv" id="ao3x-kv"></div>`;
+    
+    // 绑定控制按钮事件
+    bindBlockControlEvents(box);
 
     plan.forEach((p,i)=>{
       const wrapper=document.createElement('div'); wrapper.className='ao3x-block'; wrapper.setAttribute('data-index', String(i)); wrapper.setAttribute('data-original-html', p.html);
@@ -1375,12 +1505,23 @@
       const idx = startIndex + i;
       const text = stripHtmlToText(p.text||p.html);
       const head = text.slice(0,48); const tail = text.slice(-48);
-      return `<div class="row"><b>#${idx}</b> <span class="ao3x-small">in≈${p.inTok||0}</span> ｜ <span class="ao3x-small">开头：</span>${escapeHTML(head)} <span class="ao3x-small">…结尾：</span>${escapeHTML(tail)}</div>`;
+      return `<div class="row"><label class="ao3x-block-checkbox"><input type="checkbox" data-block-index="${idx}"><span class="checkmark"></span></label><b>#${idx}</b> <span class="ao3x-small">in≈${p.inTok||0}</span> ｜ <span class="ao3x-small">开头：</span>${escapeHTML(head)} <span class="ao3x-small">…结尾：</span>${escapeHTML(tail)}</div>`;
     }).join('');
     const kv = `<div class="ao3x-kv" id="ao3x-kv"></div>`;
     const headHtml = `<h4>切块计划：共 ${plan.length} 块</h4>`;
+    const controls = `
+      <div class="ao3x-block-controls">
+        <button id="ao3x-select-all" class="ao3x-btn-mini">全选</button>
+        <button id="ao3x-select-none" class="ao3x-btn-mini">取消全选</button>
+        <button id="ao3x-select-invert" class="ao3x-btn-mini">反选</button>
+        <button id="ao3x-retry-selected" class="ao3x-btn-mini ao3x-btn-primary-mini">重试选中</button>
+      </div>
+    `;
     const fixed = Array.from(box.querySelectorAll('.row')).slice(0, startIndex).map(n=>n.outerHTML).join('');
-    box.innerHTML = headHtml + fixed + rows + kv;
+    box.innerHTML = headHtml + controls + fixed + rows + kv;
+    
+    // 重新绑定控制按钮事件
+    bindBlockControlEvents(box);
 
     for (let i=startIndex; i<plan.length; i++){
       if (c.querySelector(`[data-chunk-id="${i}"]`)) continue; // already exists
@@ -1403,6 +1544,59 @@
     const head = plan.slice(0, startIndex);
     const reindexed = packed.map((p, idx) => ({...p, index: head.length + idx}));
     return head.concat(reindexed);
+  }
+
+  /* ================= 块选择控制事件绑定 ================= */
+  function bindBlockControlEvents(container) {
+    const selectAllBtn = container.querySelector('#ao3x-select-all');
+    const selectNoneBtn = container.querySelector('#ao3x-select-none');
+    const selectInvertBtn = container.querySelector('#ao3x-select-invert');
+    const retrySelectedBtn = container.querySelector('#ao3x-retry-selected');
+    
+    if (selectAllBtn) {
+      selectAllBtn.addEventListener('click', () => {
+        const checkboxes = container.querySelectorAll('.ao3x-block-checkbox input[type="checkbox"]');
+        checkboxes.forEach(cb => cb.checked = true);
+        UI.toast(`已选择 ${checkboxes.length} 个块`);
+      });
+    }
+    
+    if (selectNoneBtn) {
+      selectNoneBtn.addEventListener('click', () => {
+        const checkboxes = container.querySelectorAll('.ao3x-block-checkbox input[type="checkbox"]');
+        checkboxes.forEach(cb => cb.checked = false);
+        UI.toast('已取消全部选择');
+      });
+    }
+    
+    if (selectInvertBtn) {
+      selectInvertBtn.addEventListener('click', () => {
+        const checkboxes = container.querySelectorAll('.ao3x-block-checkbox input[type="checkbox"]');
+        let selectedCount = 0;
+        checkboxes.forEach(cb => {
+          cb.checked = !cb.checked;
+          if (cb.checked) selectedCount++;
+        });
+        UI.toast(`已反选，当前选中 ${selectedCount} 个块`);
+      });
+    }
+    
+    if (retrySelectedBtn) {
+      retrySelectedBtn.addEventListener('click', () => {
+        const checkboxes = container.querySelectorAll('.ao3x-block-checkbox input[type="checkbox"]:checked');
+        const selectedIndices = Array.from(checkboxes).map(cb => {
+          const index = cb.getAttribute('data-block-index');
+          return parseInt(index, 10);
+        }).filter(i => !isNaN(i));
+        
+        if (selectedIndices.length === 0) {
+          UI.toast('请先选择要重试的块');
+          return;
+        }
+        
+        Controller.retrySelectedBlocks(selectedIndices);
+      });
+    }
   }
 
   /* ================= Controller ================= */
@@ -1469,7 +1663,8 @@ downloadTranslation() {
   }
 
   // 4) EvansBrowser / iOS Safari 家族 → 走云端“两步法”（POST→GET）；其他浏览器保留 Blob
-  const WORKER_ORIGIN = 'https://txt.jagerze.tech';
+  const s = settings.get();
+  const WORKER_ORIGIN = s.download?.workerUrl || '';
 
 // —— 只针对 EvansBrowser，其他一律走 Blob ——
 // 你给的精确 UA（可留作备用精确等号匹配）
@@ -1628,6 +1823,213 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       return out;
     },
 
+    // 重试选中的块（手动选择）
+    async retrySelectedBlocks(selectedIndices){
+      if (!selectedIndices || !selectedIndices.length) {
+        UI.toast('未选择要重试的块');
+        return;
+      }
+      
+      const s = settings.get();
+      UI.toast(`开始重试 ${selectedIndices.length} 个选中块…`);
+      
+      const c = document.querySelector('#ao3x-render');
+      if (!c) {
+        UI.toast('未找到渲染容器');
+        return;
+      }
+      
+      // 彻底清理选中块的所有缓存和状态
+      selectedIndices.forEach(i => {
+        // 清除TransStore中的旧翻译和完成状态
+        TransStore.set(String(i), '');
+        if (TransStore._done) delete TransStore._done[i];
+        
+        // 清理RenderState中的应用状态
+        if (RenderState && RenderState.lastApplied) {
+          RenderState.lastApplied[i] = '';
+        }
+        
+        // 清理Streamer中的缓冲区
+        if (typeof Streamer !== 'undefined' && Streamer._buf) {
+          Streamer._buf[i] = '';
+          Streamer._dirty[i] = false;
+        }
+        
+        // 重置DOM显示为待译状态
+        const anchor = c.querySelector(`[data-chunk-id="${i}"]`);
+        if (anchor) {
+          let transDiv = anchor.parentElement.querySelector('.ao3x-translation');
+          if (transDiv) {
+            transDiv.innerHTML = '<span class="ao3x-muted">（重新翻译中…）</span>';
+            // 强制重新设置最小高度
+            transDiv.style.minHeight = '60px';
+          }
+        }
+      });
+      
+      // 构造子计划（复用 data-original-html）
+      const subPlan = selectedIndices.map(i => {
+        const block = c.querySelector(`.ao3x-block[data-index="${i}"]`);
+        const html = block ? (block.getAttribute('data-original-html') || '') : '';
+        return { index: i, html };
+      });
+      
+      // 状态计数
+      let inFlight = 0, completed = 0, failed = 0;
+      updateKV({ 重试进行中: inFlight, 重试完成: completed, 重试失败: failed });
+      
+      const postOne = (idx) => {
+        const planItem = subPlan.find(p => p.index === idx);
+        if (!planItem || !planItem.html) {
+          failed++;
+          updateKV({ 重试进行中: inFlight, 重试完成: completed, 重试失败: failed });
+          return;
+        }
+        
+        const label = `retry-selected#${idx}`;
+        inFlight++; 
+        updateKV({ 重试进行中: inFlight, 重试完成: completed, 重试失败: failed });
+        
+        postChatWithRetry({
+          endpoint: resolveEndpoint(s.api.baseUrl, s.api.path),
+          key: s.api.key,
+          payload: {
+            model: s.model.id,
+            messages: [
+              { role:'system', content: s.prompt.system },
+              { role:'user',   content: s.prompt.userTemplate.replace('{{content}}', planItem.html) }
+            ],
+            temperature: s.gen.temperature,
+            max_tokens: s.gen.maxTokens,
+            stream: !!s.stream.enabled
+          },
+          stream: s.stream.enabled,
+          label,
+          onDelta: (delta) => { 
+            Streamer.push(idx, delta, (k, clean) => { 
+              TransStore.set(String(k), clean); 
+              // 只有当前顺序渲染的块才能实时显示，其他块仅缓存
+              if (RenderState.canRender(k)) {
+                RenderState.applyIncremental(k, clean);
+              }
+            }); 
+          },
+          onFinishReason: (fr) => { 
+            d('retry-selected:finish_reason', {idx, fr});
+            handleFinishReason(fr, `retry-selected#${idx}`);
+          },
+          onDone: () => {
+            TransStore.markDone(idx);
+            inFlight--; completed++;
+            Streamer.done(idx, (k, clean) => { 
+              TransStore.set(String(k), clean); 
+              // 只有当前顺序渲染的块才能实时显示，其他块仅缓存
+              if (RenderState.canRender(k)) {
+                RenderState.applyIncremental(k, clean);
+              }
+            });
+            
+            // 若正好轮到该块，也推进一次顺序渲染
+            if (RenderState.canRender(idx)) RenderState.finalizeCurrent();
+            updateKV({ 重试进行中: inFlight, 重试完成: completed, 重试失败: failed });
+            
+            // 检查是否所有选中的块都完成了
+            if (completed + failed >= selectedIndices.length) {
+              // 清理状态显示，恢复正常显示
+              setTimeout(() => {
+                const kvElement = document.querySelector('#ao3x-kv');
+                if (kvElement) {
+                  // 显示总体统计而不是重试统计
+                  const totalCompleted = Object.keys(TransStore._done || {}).length;
+                  const total = RenderState.total || 0;
+                  updateKV({ 已完成: totalCompleted, 总计: total });
+                }
+                UI.updateToolbarState();
+              }, 1000);
+            }
+          },
+          onError: (e) => {
+            inFlight--; failed++;
+            const msg = `<p class="ao3x-muted">[重试失败：${e.message}]</p>`;
+            TransStore.set(String(idx), msg);
+            TransStore.markDone(idx);
+            // 只有当前顺序渲染的块才能实时显示，其他块仅缓存
+            if (RenderState.canRender(idx)) {
+              RenderState.applyIncremental(idx, msg);
+            }
+            
+            if (RenderState.canRender(idx)) RenderState.finalizeCurrent();
+            updateKV({ 重试进行中: inFlight, 重试完成: completed, 重试失败: failed });
+            
+            // 检查是否所有选中的块都完成了
+            if (completed + failed >= selectedIndices.length) {
+              // 清理状态显示，恢复正常显示
+              setTimeout(() => {
+                const kvElement = document.querySelector('#ao3x-kv');
+                if (kvElement) {
+                  // 显示总体统计而不是重试统计
+                  const totalCompleted = Object.keys(TransStore._done || {}).length;
+                  const total = RenderState.total || 0;
+                  updateKV({ 已完成: totalCompleted, 总计: total });
+                }
+                UI.updateToolbarState();
+              }, 1000);
+            }
+          }
+        });
+      };
+      
+      // 按设置并发数重试选中的块
+      const conc = Math.max(1, Math.min(4, s.concurrency || 2));
+      let ptr = 0;
+      
+      const processNext = () => {
+        while (ptr < selectedIndices.length) {
+          const i = selectedIndices[ptr++];
+          postOne(i);
+          
+          // 达到并发限制时暂停
+          if (inFlight >= conc) {
+            break;
+          }
+        }
+        
+        // 如果还有未处理的块，稍后继续
+        if (ptr < selectedIndices.length && inFlight < conc) {
+          setTimeout(processNext, 100);
+        }
+      };
+      
+      // 开始处理
+      processNext();
+      
+      // 监控完成状态
+      const checkCompletion = () => {
+        if (completed + failed >= selectedIndices.length) {
+          UI.toast(`选中块重试完成：成功 ${completed}，失败 ${failed}`);
+          
+          // 最后兜底刷新
+          finalFlushAll(RenderState.total || 0);
+          
+          // 如果是双语模式且可以渲染，更新双语视图
+          try { 
+            if (View && View.mode === 'bi' && Bilingual.canRender()) {
+              View.renderBilingual(); 
+            } 
+          } catch {}
+          
+          return;
+        }
+        
+        // 如果未完成，继续监控
+        setTimeout(checkCompletion, 500);
+      };
+      
+      // 开始监控完成状态
+      setTimeout(checkCompletion, 500);
+    },
+
     // 仅重试未完成/失败的块（断点续传）
     async retryIncomplete(){
       const s = settings.get();
@@ -1671,7 +2073,10 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
           stream: s.stream.enabled,
           label,
           onDelta: (delta) => { Streamer.push(idx, delta, (k, clean)=>{ TransStore.set(String(k), clean); Controller.applyDirect(k, clean); }); },
-          onFinishReason: (fr)=>{ d('retry:finish_reason', {idx, fr}); },
+          onFinishReason: (fr)=>{ 
+            d('retry:finish_reason', {idx, fr});
+            handleFinishReason(fr, `retry#${idx}`);
+          },
           onDone: () => {
             TransStore.markDone(idx);
             inFlight--; completed++;
@@ -1831,7 +2236,10 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         },
         label:`single#${i}`,
         onDelta: (delta)=>{ Streamer.push(i, delta, (k, clean)=>{ View.setBlockTranslation(k, clean); }); },
-        onFinishReason: (fr)=>{ d('finish_reason', {i, fr}); },
+        onFinishReason: (fr)=>{ 
+          d('finish_reason', {i, fr});
+          handleFinishReason(fr, `single#${i}`);
+        },
         onDone: async () => {
           TransStore.markDone(i);
           Streamer.done(i, (k, clean) => { View.setBlockTranslation(k, clean); });
@@ -1900,6 +2308,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
           onDelta: (delta)=>{ Streamer.push(i, delta, (k, clean)=>{ View.setBlockTranslation(k, clean); }); },
           onFinishReason: async (fr)=>{
             d('finish_reason', {i, fr});
+            handleFinishReason(fr, `chunk#${i}`);
             if(fr === 'length'){
               // 优先：适度扩大 out，再次尝试一次
               const extra = Math.floor(maxTokensLocal * 0.5);
@@ -1922,7 +2331,10 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
                     stream: !!settings.get().stream.enabled
                   },
                   onDelta: (delta)=>{ Streamer.push(i, delta, (k, clean)=>{ View.setBlockTranslation(k, clean); }); },
-                  onFinishReason: (fr2)=>{ d('finish_reason(second)', {i, fr2}); },
+                  onFinishReason: (fr2)=>{ 
+                    d('finish_reason(second)', {i, fr2});
+                    handleFinishReason(fr2, `chunk#${i}-retry-max`);
+                  },
                   onDone: ()=>{},
                   onError: (e)=>{ d('length:retry-max error', e); }
                 });
