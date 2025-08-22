@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结（移动端 Safari / Tampermonkey）
 // @namespace    https://ao3-translate.example
-// @version      0.7.3
+// @version      0.7.4
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -49,20 +49,14 @@
     get() {
       try {
         const saved = GM_Get(NS);
-        return saved ? deepMerge(clone(this.defaults), saved) : clone(this.defaults);
-      } catch { return clone(this.defaults); }
+        return saved ? deepMerge(structuredClone(this.defaults), saved) : structuredClone(this.defaults);
+      } catch { return structuredClone(this.defaults); }
     },
     set(p) { const merged = deepMerge(this.get(), p); GM_Set(NS, merged); return merged; }
   };
   function GM_Get(k){ try{ return GM_getValue(k); }catch{ try{ return JSON.parse(localStorage.getItem(k)||'null'); }catch{ return null; } } }
   function GM_Set(k,v){ try{ GM_setValue(k,v); }catch{ try{ localStorage.setItem(k, JSON.stringify(v)); }catch{} } }
 
-  // Safe clone helper to avoid structuredClone incompatibility
-  function clone(x){
-    try { return structuredClone(x); } catch {
-      try { return JSON.parse(JSON.stringify(x)); } catch { return x; }
-    }
-  }
 
   const d = (...args) => { if (settings.get().debug) console.log('[AO3X]', ...args); };
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -83,15 +77,7 @@
     return tmp.innerHTML;
   }
   function stripHtmlToText(html){ const div=document.createElement('div'); div.innerHTML=html; return (div.textContent||'').replace(/\s+/g,' ').trim(); }
-  function escapeHTML(s){
-    return s.replace(/[&<>"']/g, (m) => ({
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&#39;'
-    })[m]);
-  }
+  function escapeHTML(s){ return s.replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m])); }
 
   /* ================= Heuristic Token Estimator (local, no external deps) ================= */
   const TKT = {
@@ -550,13 +536,11 @@
         retryBtn.style.display = hasFailedBlocks ? '' : 'none';
       }
 
-      // 检查翻译缓存，控制相关按钮显示
+      // 检查是否有缓存，控制清除缓存按钮的显示
       if (clearCacheBtn) {
-        const hasTransCache = TransStore.hasCache();
-        clearCacheBtn.style.display = hasTransCache ? '' : 'none';
+        const hasCache = TransStore.hasCache();
+        clearCacheBtn.style.display = hasCache ? '' : 'none';
       }
-
-      // 移除总结缓存相关按钮（总结为一次性展示，不缓存）
 
       // 检查翻译是否全部完成，高亮双语对照按钮
       if (biBtn) {
