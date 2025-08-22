@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结（移动端 Safari / Tampermonkey）
 // @namespace    https://ao3-translate.example
-// @version      0.7.0
+// @version      0.7.2
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -3242,6 +3242,20 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
   /* ================= 自动加载缓存 ================= */
   async function autoLoadFromCache(nodes, cacheInfo) {
     try {
+      // 确保TransStore已经从localStorage加载了数据
+      TransStore.loadFromCache();
+      
+      // 验证内存缓存是否正确加载
+      if (Object.keys(TransStore._map || {}).length === 0) {
+        console.warn('[AO3X] Cache exists in localStorage but not loaded to memory, forcing reload');
+        TransStore.loadFromCache();
+        // 如果还是没有加载，说明缓存可能损坏
+        if (Object.keys(TransStore._map || {}).length === 0) {
+          UI.toast('缓存数据异常，请重新翻译');
+          return;
+        }
+      }
+      
       // 标记当前正在显示缓存
       View.setShowingCache(true);
 
@@ -3310,26 +3324,43 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       View.setMode('trans');
       RenderState.setTotal(plan.length);
       Bilingual.setTotal(plan.length);
+      
+      // 将所有已完成的缓存标记为完成状态
+      for (let i = 0; i < cacheInfo.total; i++) {
+        const cachedContent = TransStore.get(String(i));
+        if (cachedContent && TransStore._done && !TransStore._done[i]) {
+          TransStore._done[i] = true;
+        }
+      }
+      
+      // 设置渲染状态：所有缓存块都已经完成渲染
+      RenderState.nextToRender = cacheInfo.total;
 
       // 显示工具栏
       UI.showToolbar();
 
       // 刷新显示以加载缓存内容
       View.refresh(true);
+      
+      // 强制刷新所有缓存内容到DOM
+      finalFlushAll(cacheInfo.total);
 
       // 更新工具栏状态
       UI.updateToolbarState();
 
       // 显示提示信息
-      UI.toast(`已自动加载 ${cacheInfo.completed}/${cacheInfo.total} 段缓存翻译`);
+      const actualLoaded = Object.keys(TransStore._map || {}).filter(k => TransStore._map[k]).length;
+      UI.toast(`已自动加载 ${actualLoaded}/${cacheInfo.total} 段缓存翻译`);
 
       if (settings.get().debug) {
-        console.log('[AO3X] Auto-loaded cache:', cacheInfo);
+        console.log('[AO3X] Auto-loaded cache:', cacheInfo, 'Actual loaded:', actualLoaded);
+        console.log('[AO3X] Cache map keys:', Object.keys(TransStore._map || {}));
+        console.log('[AO3X] Cache done keys:', Object.keys(TransStore._done || {}));
       }
 
     } catch (e) {
       console.error('[AO3X] Failed to auto-load cache:', e);
-      UI.toast('自动加载缓存失败');
+      UI.toast('自动加载缓存失败：' + e.message);
     }
   }
 
@@ -3350,9 +3381,11 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
     // 检查是否有缓存，如果有则自动加载
     const cacheInfo = TransStore.getCacheInfo();
     if (cacheInfo.hasCache) {
-      // 延迟一下确保UI已经初始化完成
-      setTimeout(() => {
-        autoLoadFromCache(nodes, cacheInfo);
+      // 延迟一下确保UI已经初始化完成，并确保TransStore数据已加载
+      setTimeout(async () => {
+        // 再次确保缓存数据已加载到内存
+        TransStore.loadFromCache();
+        await autoLoadFromCache(nodes, cacheInfo);
       }, 100);
     }
 
