@@ -1721,7 +1721,7 @@
     const rows = plan.map((p,i)=>{
       const text = stripHtmlToText(p.text||p.html);
       const head = text.slice(0,48); const tail = text.slice(-48);
-      return `<div class="row"><label class="ao3x-block-checkbox"><input type="checkbox" data-block-index="${i}"><span class="checkmark"></span></label><b>#${i}</b> <span class="ao3x-small">in≈${p.inTok||0}</span> ｜ <span class="ao3x-small">开头：</span>${escapeHTML(head)} <span class="ao3x-small">…结尾：</span>${escapeHTML(tail)}</div>`;
+      return `<div class="row"><label class="ao3x-block-checkbox"><input type="checkbox" data-block-index="${i}"><span class="checkmark"></span></label><b>#${i}</b> <span class="ao3x-small">in≈${p.inTok||0}</span> ｜ <span class="ao3x-small">开头：</span>${escapeHTML(head)} <span class="ao3x-small">结尾：</span>${escapeHTML(tail)}</div>`;
     }).join('');
     const controls = `
       <div class="ao3x-block-controls">
@@ -1753,7 +1753,7 @@
       const idx = startIndex + i;
       const text = stripHtmlToText(p.text||p.html);
       const head = text.slice(0,48); const tail = text.slice(-48);
-      return `<div class="row"><label class="ao3x-block-checkbox"><input type="checkbox" data-block-index="${idx}"><span class="checkmark"></span></label><b>#${idx}</b> <span class="ao3x-small">in≈${p.inTok||0}</span> ｜ <span class="ao3x-small">开头：</span>${escapeHTML(head)} <span class="ao3x-small">…结尾：</span>${escapeHTML(tail)}</div>`;
+      return `<div class="row"><label class="ao3x-block-checkbox"><input type="checkbox" data-block-index="${idx}"><span class="checkmark"></span></label><b>#${idx}</b> <span class="ao3x-small">in≈${p.inTok||0}</span> ｜ <span class="ao3x-small">开头：</span>${escapeHTML(head)} <span class="ao3x-small">结尾：</span>${escapeHTML(tail)}</div>`;
     }).join('');
     const kv = `<div class="ao3x-kv" id="ao3x-kv"></div>`;
     const headHtml = `<h4>切块计划：共 ${plan.length} 块</h4>`;
@@ -2854,7 +2854,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         const head = text.slice(0, 48);
         const tail = text.slice(-48);
         const estIn = p.inTok != null ? p.inTok : 0;
-        return `<div class="row"><b>#${i}</b> <span class="ao3x-small">in≈${estIn}</span> ｜ <span class="ao3x-small">开头：</span>${escapeHTML(head)} <span class="ao3x-small">…结尾：</span>${escapeHTML(tail)}</div>`;
+        return `<div class="row"><b>#${i}</b> <span class="ao3x-small">in≈${estIn}</span> ｜ <span class="ao3x-small">开头：</span>${escapeHTML(head)} <span class="ao3x-small">结尾：</span>${escapeHTML(tail)}</div>`;
       }).join('');
       
       box.innerHTML = `<h4>总结计划：共 ${plan.length} 段</h4>${rows}<div class="ao3x-kv" id="ao3x-summary-kv"></div>`;
