@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结（移动端 Safari / Tampermonkey）
 // @namespace    https://ao3-translate.example
-// @version      0.7.4
+// @version      0.7.7
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -23,11 +23,19 @@
       api: { baseUrl: '', path: 'v1/chat/completions', key: '' },
       model: { id: '', contextWindow: 16000 },
       gen: { maxTokens: 7000, temperature: 0.7, top_p: 1 },
+      translate: {
+        model: { id: '', contextWindow: 16000 },
+        gen: { maxTokens: 7000, temperature: 0.7, top_p: 1 },
+        reasoningEffort: -1  // -1不发送, 'none'/'low'/'medium'/'high'才发送
+      },
       prompt: {
-        system: '你是专业的文学翻译助手。请保持 AO3 文本结构、段落层次、行内格式（粗体、斜体、链接），名字与术语一致，语气自然流畅。',
-        userTemplate: '请将以下 AO3 正文完整翻译为中文，人名保持原文，保持 HTML 结构与行内标记，仅替换可见文本内容：\n{{content}}\n（请直接返回 HTML 片段，不要使用代码块或转义。）'
+        system: '你是专业的文学翻译助手。请保持 AO3 文本结构、段落层次、行内格式（粗体、斜体、链接），人名不做翻译，术语翻译时意译，以保证不了解者也能看懂为准则，语气自然流畅。',
+        userTemplate: '请将以下 AO3 正文完整翻译为中文，人名保持原文，术语翻译时意译，以保证不了解者也能看懂为准则，保持 HTML 结构与行内标记，仅替换可见文本内容：\n{{content}}\n（请直接返回 HTML 片段，不要使用代码块或转义。）'
       },
       summary: {
+        model: { id: '', contextWindow: 16000 },
+        gen: { maxTokens: 7000, temperature: 0.7, top_p: 1 },
+        reasoningEffort: -1,  // -1不发送, 'none'/'low'/'medium'/'high'才发送
         system: '你是专业的文学内容总结助手。请准确概括故事情节、人物关系和重要事件，保持客观中性的语调，不要做文本分析，仅输出总结内容。',
         userTemplate: '请对以下AO3章节内容进行剧情总结，重点包括：主要情节发展、角色互动、重要对话或事件。请用简洁明了的中文总结：\n{{content}}\n（请直接返回总结内容，不需要格式化，不需要做文本分析，人名保留原文不翻译。）',
         ratioTextToSummary: 0.3  // 总结通常比原文更简洁
@@ -43,7 +51,7 @@
         packSlack: 0.95,          // 更激进一点
         ratioOutPerIn: 1        // ★ 英->中常见：输出token约为输入的70%
       },
-      watchdog: { idleMs: 10000, hardMs: 90000, maxRetry: 1 },
+      watchdog: { idleMs: -1, hardMs: -1, maxRetry: 1 },
       download: { workerUrl: '' }
     },
     get() {
@@ -133,19 +141,19 @@
       const floatingMenu = document.createElement('div');
       floatingMenu.className = 'ao3x-floating-menu';
       floatingMenu.style.display = 'none';
-      
+
       // 创建下载按钮
       const btnDownload = document.createElement('button');
       btnDownload.className = 'ao3x-btn ao3x-floating-btn';
       btnDownload.textContent = '📥';
       btnDownload.title = '下载当前译文缓存';
-      
+
       // 创建总结按钮
       const btnSummary = document.createElement('button');
       btnSummary.className = 'ao3x-btn ao3x-floating-btn';
       btnSummary.textContent = '📝';
       btnSummary.title = '生成章节总结';
-      
+
       // 移除占位按钮，菜单仅保留“下载”和“总结”两个按钮
       floatingMenu.appendChild(btnDownload);
       floatingMenu.appendChild(btnSummary);
@@ -324,37 +332,95 @@
           </div>
 
           <div class="ao3x-section">
-            <h4 class="ao3x-section-title">模型设置</h4>
+            <h4 class="ao3x-section-title">翻译模型设置</h4>
             <div class="ao3x-field">
-              <label>模型名称</label>
+              <label>翻译模型名称</label>
               <div class="ao3x-input-group">
-                <input id="ao3x-model" type="text" placeholder="gpt-4o-mini"/>
+                <input id="ao3x-translate-model" type="text" placeholder="gpt-4o-mini"/>
                 <button id="ao3x-fetch-models" class="ao3x-btn-secondary">获取列表</button>
               </div>
-              <span class="ao3x-hint">手动输入模型名称或点击获取列表选择</span>
+              <span class="ao3x-hint">翻译专用模型，可与总结模型不同</span>
             </div>
-            <div id="ao3x-model-browser" class="ao3x-model-browser" style="display:none">
+            <div id="ao3x-translate-model-browser" class="ao3x-model-browser" style="display:none">
               <div class="ao3x-field">
                 <label>搜索模型</label>
-                <input id="ao3x-model-q" type="text" placeholder="输入关键词筛选模型..." class="ao3x-model-search"/>
+                <input id="ao3x-translate-model-q" type="text" placeholder="输入关键词筛选模型..." class="ao3x-model-search"/>
               </div>
-              <div class="ao3x-model-list" id="ao3x-model-list"></div>
+              <div class="ao3x-model-list" id="ao3x-translate-model-list"></div>
             </div>
             <div class="ao3x-field-group">
               <div class="ao3x-field">
-                <label>上下文窗口</label>
-                <input id="ao3x-cw" type="number" min="2048" value="8192"/>
+                <label>翻译上下文窗口</label>
+                <input id="ao3x-translate-cw" type="number" min="2048" value="16000"/>
               </div>
               <div class="ao3x-field">
-                <label>Max Tokens</label>
-                <input id="ao3x-maxt" type="number" min="128" value="2048"/>
+                <label>翻译Max Tokens</label>
+                <input id="ao3x-translate-maxt" type="number" min="128" value="7000"/>
               </div>
             </div>
-            <div class="ao3x-field">
-              <label>温度 <span class="ao3x-badge">0-2</span></label>
-              <input id="ao3x-temp" type="number" step="0.1" min="0" max="2" value="0.2"/>
+            <div class="ao3x-field-group">
+              <div class="ao3x-field">
+                <label>翻译温度 <span class="ao3x-badge">0-2</span></label>
+                <input id="ao3x-translate-temp" type="number" step="0.1" min="0" max="2" value="0.7"/>
+              </div>
+              <div class="ao3x-field">
+                <label>翻译推理强度</label>
+                <select id="ao3x-translate-reasoning">
+                  <option value="-1">不发送</option>
+                  <option value="none">none</option>
+                  <option value="low">low</option>
+                  <option value="medium">medium</option>
+                  <option value="high">high</option>
+                </select>
+              </div>
             </div>
           </div>
+
+          <div class="ao3x-section">
+            <h4 class="ao3x-section-title">总结模型设置</h4>
+            <div class="ao3x-field">
+              <label>总结模型名称</label>
+              <div class="ao3x-input-group">
+                <input id="ao3x-summary-model" type="text" placeholder="gpt-4o-mini"/>
+                <button id="ao3x-fetch-summary-models" class="ao3x-btn-secondary">获取列表</button>
+              </div>
+              <span class="ao3x-hint">总结专用模型，可与翻译模型不同</span>
+            </div>
+            <div id="ao3x-summary-model-browser" class="ao3x-model-browser" style="display:none">
+              <div class="ao3x-field">
+                <label>搜索模型</label>
+                <input id="ao3x-summary-model-q" type="text" placeholder="输入关键词筛选模型..." class="ao3x-model-search"/>
+              </div>
+              <div class="ao3x-model-list" id="ao3x-summary-model-list"></div>
+            </div>
+            <div class="ao3x-field-group">
+              <div class="ao3x-field">
+                <label>总结上下文窗口</label>
+                <input id="ao3x-summary-cw" type="number" min="2048" value="16000"/>
+              </div>
+              <div class="ao3x-field">
+                <label>总结Max Tokens</label>
+                <input id="ao3x-summary-maxt" type="number" min="128" value="7000"/>
+              </div>
+            </div>
+            <div class="ao3x-field-group">
+              <div class="ao3x-field">
+                <label>总结温度 <span class="ao3x-badge">0-2</span></label>
+                <input id="ao3x-summary-temp" type="number" step="0.1" min="0" max="2" value="0.7"/>
+              </div>
+              <div class="ao3x-field">
+                <label>总结推理强度</label>
+                <select id="ao3x-summary-reasoning">
+                  <option value="-1">不发送</option>
+                  <option value="none">none</option>
+                  <option value="low">low</option>
+                  <option value="medium">medium</option>
+                  <option value="high">high</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
 
           <div class="ao3x-section">
             <h4 class="ao3x-section-title">翻译提示词设置</h4>
@@ -365,6 +431,10 @@
             <div class="ao3x-field">
               <label>User 模板 <span class="ao3x-hint">使用 {{content}} 作为占位符</span></label>
               <textarea id="ao3x-user" rows="3"></textarea>
+            </div>
+            <div class="ao3x-field">
+              <label>译文/原文比 <span class="ao3x-hint">用于计算分块，通常译文比原文更长</span></label>
+              <input id="ao3x-ratio" type="number" step="0.05" min="0.3" value="0.7"/>
             </div>
           </div>
 
@@ -390,10 +460,6 @@
               <div class="ao3x-field">
                 <label>并发数</label>
                 <input id="ao3x-conc" type="number" min="1" max="8" value="3"/>
-              </div>
-              <div class="ao3x-field">
-                <label>译文/原文比</label>
-                <input id="ao3x-ratio" type="number" step="0.05" min="0.3" value="0.7"/>
               </div>
             </div>
             <div class="ao3x-field-group">
@@ -444,15 +510,52 @@
       $('#ao3x-close-x', panel).addEventListener('click', UI.closePanel);
 
       const fetchBtn = $('#ao3x-fetch-models', panel);
-      const browserBox = $('#ao3x-model-browser', panel);
-      fetchBtn.addEventListener('click', async () => {
-        browserBox.style.display = 'block';
-        await ModelBrowser.fetchAndRender(panel);
-        UI.toast('模型列表已更新');
-      });
-      $('#ao3x-model-q', panel).addEventListener('input', () => ModelBrowser.filter(panel));
+      const fetchSummaryBtn = $('#ao3x-fetch-summary-models', panel);
+      const translateBrowserBox = $('#ao3x-translate-model-browser', panel);
+      const summaryBrowserBox = $('#ao3x-summary-model-browser', panel);
 
-      const autosave = () => { settings.set(collectPanelValues(panel)); applyFontSize(); saveToast(); };
+      fetchBtn.addEventListener('click', async () => {
+        translateBrowserBox.style.display = 'block';
+        await ModelBrowser.fetchAndRender(panel, 'translate');
+        UI.toast('翻译模型列表已更新');
+      });
+
+      fetchSummaryBtn.addEventListener('click', async () => {
+        summaryBrowserBox.style.display = 'block';
+        await ModelBrowser.fetchAndRender(panel, 'summary');
+        UI.toast('总结模型列表已更新');
+      });
+
+      $('#ao3x-translate-model-q', panel).addEventListener('input', () => ModelBrowser.filter(panel, 'translate'));
+      $('#ao3x-summary-model-q', panel).addEventListener('input', () => ModelBrowser.filter(panel, 'summary'));
+
+      const autosave = () => {
+        // 检查翻译模型变更时的同步逻辑
+        const translateModel = $('#ao3x-translate-model', panel).value.trim();
+        const summaryModel = $('#ao3x-summary-model', panel).value.trim();
+
+        // 如果总结模型为空且翻译模型有值，则同步
+        if (!summaryModel && translateModel) {
+          $('#ao3x-summary-model', panel).value = translateModel;
+        }
+
+        settings.set(collectPanelValues(panel));
+        applyFontSize();
+        saveToast();
+      };
+
+      // 专门监听翻译模型输入框的变化
+      $('#ao3x-translate-model', panel).addEventListener('input', debounce(() => {
+        const translateModel = $('#ao3x-translate-model', panel).value.trim();
+        const summaryModel = $('#ao3x-summary-model', panel).value.trim();
+
+        // 如果总结模型为空，则自动同步翻译模型的值
+        if (!summaryModel && translateModel) {
+          $('#ao3x-summary-model', panel).value = translateModel;
+        }
+        autosave();
+      }, 300));
+
       panel.addEventListener('input', debounce(autosave, 300), true);
       panel.addEventListener('change', autosave, true);
       panel.addEventListener('blur', (e)=>{ if(panel.contains(e.target)) autosave(); }, true);
@@ -466,12 +569,24 @@
     syncPanel() {
       const s = settings.get();
       $('#ao3x-base').value = s.api.baseUrl; $('#ao3x-path').value = s.api.path; $('#ao3x-key').value = s.api.key;
-      $('#ao3x-model').value = s.model.id; $('#ao3x-cw').value = s.model.contextWindow; $('#ao3x-maxt').value = s.gen.maxTokens;
-      $('#ao3x-temp').value = s.gen.temperature; $('#ao3x-sys').value = s.prompt.system; $('#ao3x-user').value = s.prompt.userTemplate;
+      // 同步翻译和总结模型设置
+      $('#ao3x-translate-model').value = s.translate?.model?.id || s.model?.id || '';
+      $('#ao3x-translate-cw').value = s.translate?.model?.contextWindow || s.model?.contextWindow || 16000;
+      $('#ao3x-translate-maxt').value = s.translate?.gen?.maxTokens || s.gen?.maxTokens || 7000;
+      $('#ao3x-translate-temp').value = s.translate?.gen?.temperature || s.gen?.temperature || 0.7;
+      $('#ao3x-translate-reasoning').value = String(s.translate?.reasoningEffort ?? -1);
+
+      $('#ao3x-summary-model').value = s.summary?.model?.id || '';
+      $('#ao3x-summary-cw').value = s.summary?.model?.contextWindow || s.model?.contextWindow || 16000;
+      $('#ao3x-summary-maxt').value = s.summary?.gen?.maxTokens || s.gen?.maxTokens || 7000;
+      $('#ao3x-summary-temp').value = s.summary?.gen?.temperature || s.gen?.temperature || 0.7;
+      $('#ao3x-summary-reasoning').value = String(s.summary?.reasoningEffort ?? -1);
+
+      $('#ao3x-sys').value = s.prompt.system; $('#ao3x-user').value = s.prompt.userTemplate;
       $('#ao3x-stream').checked = !!s.stream.enabled; $('#ao3x-stream-minframe').value = String(s.stream.minFrameMs ?? 40);
       $('#ao3x-debug').checked = !!s.debug; $('#ao3x-conc').value = String(s.concurrency);
       $('#ao3x-idle').value = String(s.watchdog.idleMs); $('#ao3x-hard').value = String(s.watchdog.hardMs); $('#ao3x-retry').value = String(s.watchdog.maxRetry);
-      $('#ao3x-ratio').value = String(s.planner.ratioOutPerIn);
+      $('#ao3x-ratio').value = String(s.planner?.ratioOutPerIn || 0.7);
       $('#ao3x-font-size').value = String(s.ui?.fontSize || 16);
       $('#ao3x-download-worker').value = s.download?.workerUrl || '';
       // 同步总结设置字段
@@ -508,7 +623,7 @@
           }
           return;
         }
-        
+
         [...bar.querySelectorAll('button')].forEach(b => { if (!b.getAttribute('data-action')) b.classList.remove('active', 'highlight'); });
         if (!action && !btn.disabled) { btn.classList.add('active'); View.setMode(btn.getAttribute('data-mode')); }
       });
@@ -710,6 +825,7 @@
       .ao3x-field input[type="text"],
       .ao3x-field input[type="number"],
       .ao3x-field input[type="password"],
+      .ao3x-field select,
       .ao3x-field textarea{
         width:100%;padding:10px 12px;
         border:1px solid var(--c-border);border-radius:var(--radius);
@@ -717,6 +833,7 @@
         font-size:14px;transition:all .2s;box-sizing:border-box;
       }
       .ao3x-field input:focus,
+      .ao3x-field select:focus,
       .ao3x-field textarea:focus{
         outline:none;border-color:var(--c-accent);
         background:white;box-shadow:0 0 0 3px rgba(179,0,0,.1);
@@ -1042,6 +1159,13 @@
       }
 
       /* 总结视图样式 */
+      .ao3x-summary-container{
+        margin:20px 0;padding:0;
+        border-top:2px solid var(--c-accent);
+        border-bottom:2px solid var(--c-accent);
+        background:rgba(179,0,0,0.02);
+        border-radius:var(--radius);
+      }
       .ao3x-summary-block{
         margin-bottom:20px;border:1px solid var(--c-border);
         border-radius:var(--radius);background:white;
@@ -1091,22 +1215,54 @@
   function debounce(fn, wait){ let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), wait); }; }
   function collectPanelValues(panel) {
     const cur = settings.get();
+
+    // 收集翻译模型配置
+    const translateModel = $('#ao3x-translate-model', panel).value.trim();
+    const summaryModel = $('#ao3x-summary-model', panel).value.trim();
+
     return {
       api: { baseUrl: $('#ao3x-base', panel).value.trim(), path: $('#ao3x-path', panel).value.trim(), key: $('#ao3x-key', panel).value.trim() },
-      model: { id: $('#ao3x-model', panel).value.trim(), contextWindow: parseInt($('#ao3x-cw', panel).value, 10) || cur.model.contextWindow },
-      gen: { maxTokens: parseInt($('#ao3x-maxt', panel).value, 10) || cur.gen.maxTokens, temperature: parseFloat($('#ao3x-temp', panel).value) || cur.gen.temperature },
-      prompt: { system: $('#ao3x-sys', panel).value, userTemplate: $('#ao3x-user', panel).value },
+      // 保持向后兼容的model字段
+      model: {
+        id: translateModel || cur.model?.id || '',
+        contextWindow: parseInt($('#ao3x-translate-cw', panel).value, 10) || cur.model?.contextWindow || 16000
+      },
+      gen: {
+        maxTokens: parseInt($('#ao3x-translate-maxt', panel).value, 10) || cur.gen?.maxTokens || 7000,
+        temperature: parseFloat($('#ao3x-translate-temp', panel).value) || cur.gen?.temperature || 0.7
+      },
+      translate: {
+        model: {
+          id: translateModel,
+          contextWindow: parseInt($('#ao3x-translate-cw', panel).value, 10) || cur.model?.contextWindow || 16000
+        },
+        gen: {
+          maxTokens: parseInt($('#ao3x-translate-maxt', panel).value, 10) || cur.gen?.maxTokens || 7000,
+          temperature: parseFloat($('#ao3x-translate-temp', panel).value) || cur.gen?.temperature || 0.7
+        },
+        reasoningEffort: parseInt($('#ao3x-translate-reasoning', panel).value, 10) || -1
+      },
       summary: {
+        model: {
+          id: summaryModel,
+          contextWindow: parseInt($('#ao3x-summary-cw', panel).value, 10) || cur.model?.contextWindow || 16000
+        },
+        gen: {
+          maxTokens: parseInt($('#ao3x-summary-maxt', panel).value, 10) || cur.gen?.maxTokens || 7000,
+          temperature: parseFloat($('#ao3x-summary-temp', panel).value) || cur.gen?.temperature || 0.7
+        },
+        reasoningEffort: parseInt($('#ao3x-summary-reasoning', panel).value, 10) || -1,
         system: $('#ao3x-summary-sys', panel).value,
         userTemplate: $('#ao3x-summary-user', panel).value,
         ratioTextToSummary: Math.max(0.1, Math.min(1, parseFloat($('#ao3x-summary-ratio', panel).value) || cur.summary?.ratioTextToSummary || 0.3))
       },
+      prompt: { system: $('#ao3x-sys', panel).value, userTemplate: $('#ao3x-user', panel).value },
       stream: { enabled: $('#ao3x-stream', panel).checked, minFrameMs: Math.max(0, parseInt($('#ao3x-stream-minframe', panel).value||String(cur.stream.minFrameMs||40),10)) },
       concurrency: Math.max(1, Math.min(8, parseInt($('#ao3x-conc', panel).value, 10) || cur.concurrency)),
       debug: $('#ao3x-debug', panel).checked,
       planner: {
         ...cur.planner,
-        ratioOutPerIn: Math.max(0.3, parseFloat($('#ao3x-ratio', panel).value || cur.planner.ratioOutPerIn))
+        ratioOutPerIn: Math.max(0.3, parseFloat($('#ao3x-ratio', panel).value || cur.planner?.ratioOutPerIn || 0.7))
       },
       watchdog: {
         idleMs: (function(){ const v = parseInt($('#ao3x-idle', panel).value || cur.watchdog.idleMs, 10); return v === -1 ? -1 : Math.max(5000, v); })(),
@@ -1151,7 +1307,7 @@
       </div>
     `;
     box.innerHTML = `<h4>切块计划：共 ${plan.length} 块</h4>${controls}${rows}<div class="ao3x-kv" id="ao3x-kv"></div>`;
-    
+
     // 绑定控制按钮事件
     bindBlockControlEvents(box);
   }
@@ -1241,7 +1397,7 @@
   /* ================= Finish Reason Handler ================= */
   function handleFinishReason(finishReason, label) {
     if (!finishReason) return; // null 或 undefined，不处理
-    
+
     const reasonMap = {
       'stop': '正常完成',
       'length': '长度限制（将自动重试）',
@@ -1252,7 +1408,7 @@
       'safety': '安全检查触发',
       'other': '其他原因完成'
     };
-    
+
     // 只对非正常完成的情况显示提示
     if (finishReason !== 'stop' && finishReason !== 'length') {
       const reason = reasonMap[finishReason] || `未知原因: ${finishReason}`;
@@ -1379,18 +1535,61 @@
   }
   const ModelBrowser = {
     all: [],
-    async fetchAndRender(panel){ try{ const list=await getModels(); this.all=list; this.render(panel, list); } catch(e){ UI.toast('获取模型失败：'+e.message); } },
-    render(panel, list){
-      const box=$('#ao3x-model-list', panel); box.innerHTML='';
+    currentType: 'translate', // 记录当前操作的模型类型
+    async fetchAndRender(panel, type = 'translate'){
+      this.currentType = type;
+      try{
+        const list=await getModels();
+        this.all=list;
+        this.render(panel, list, type);
+      } catch(e){
+        UI.toast('获取模型失败：'+e.message);
+      }
+    },
+    render(panel, list, type = 'translate'){
+      const boxId = type === 'translate' ? '#ao3x-translate-model-list' : '#ao3x-summary-model-list';
+      const box = $(boxId, panel);
+      box.innerHTML='';
       list.forEach(m=>{
-        const div=document.createElement('div'); div.className='ao3x-model-item';
+        const div=document.createElement('div');
+        div.className='ao3x-model-item';
         div.textContent=m.id||m.name||JSON.stringify(m);
-        div.addEventListener('click', ()=>{ $('#ao3x-model', panel).value = m.id || m.name; settings.set(collectPanelValues(panel)); saveToast(); });
+        div.addEventListener('click', ()=>{
+          this.selectModel(panel, m.id || m.name, type);
+        });
         box.appendChild(div);
       });
-      $('#ao3x-model-browser', panel).style.display = 'block';
     },
-    filter(panel){ const q=($('#ao3x-model-q', panel).value||'').toLowerCase(); const list=!q? this.all : this.all.filter(m=>(m.id||'').toLowerCase().includes(q)); this.render(panel, list); }
+    selectModel(panel, modelId, type){
+      if (type === 'translate') {
+        // 设置翻译模型
+        $('#ao3x-translate-model', panel).value = modelId;
+
+        // 如果总结模型为空，则同步设置总结模型
+        const summaryModelInput = $('#ao3x-summary-model', panel);
+        if (!summaryModelInput.value.trim()) {
+          summaryModelInput.value = modelId;
+          UI.toast(`已设置翻译模型为 ${modelId}，并同步到总结模型`);
+        } else {
+          UI.toast(`已设置翻译模型为 ${modelId}`);
+        }
+      } else if (type === 'summary') {
+        // 设置总结模型
+        $('#ao3x-summary-model', panel).value = modelId;
+        UI.toast(`已设置总结模型为 ${modelId}`);
+      }
+
+      // 保存设置
+      settings.set(collectPanelValues(panel));
+      saveToast();
+    },
+    filter(panel, type = null){
+      const actualType = type || this.currentType;
+      const queryId = actualType === 'translate' ? '#ao3x-translate-model-q' : '#ao3x-summary-model-q';
+      const q = ($(queryId, panel).value||'').toLowerCase();
+      const list = !q ? this.all : this.all.filter(m=>(m.id||'').toLowerCase().includes(q));
+      this.render(panel, list, actualType);
+    }
   };
 
   /* ================= View / Render State (ordered) ================= */
@@ -1626,23 +1825,23 @@
       const c = this.ensure();
       // 查找总结专用的块容器
       const summaryBlocks = Array.from(c.querySelectorAll('.ao3x-summary-block'));
-      
+
       if (summaryBlocks.length === 0) {
         // 如果没有总结块，显示提示信息
         c.innerHTML = '<div class="ao3x-info">没有找到总结内容。请先生成章节总结。</div>';
         return;
       }
-      
+
       // 渲染每个总结块
       summaryBlocks.forEach(block => {
         const idx = block.getAttribute('data-summary-index');
         const orig = block.getAttribute('data-original-html') || '';
         const summary = SummaryStore.get(idx) || '';
-        
+
         // 创建总结视图HTML结构
         const summaryHTML = summary || '<span class="ao3x-muted">（待总结）</span>';
         const origPreview = this.getTextPreview(stripHtmlToText(orig), 100); // 显示原文预览
-        
+
         const html = `
           <div class="ao3x-summary-pair">
             <div class="ao3x-summary-header">段落 #${idx}</div>
@@ -1650,7 +1849,7 @@
             <div class="ao3x-summary-content">${summaryHTML}</div>
           </div>
         `;
-        
+
         // 使用 requestAnimationFrame 减少闪烁
         requestAnimationFrame(() => {
           block.innerHTML = `<span class="ao3x-anchor" data-summary-chunk-id="${idx}"></span>${html}`;
@@ -1732,7 +1931,7 @@
       </div>
     `;
     box.innerHTML = `<h4>切块计划：共 ${plan.length} 块</h4>${controls}${rows}<div class="ao3x-kv" id="ao3x-kv"></div>`;
-    
+
     // 绑定控制按钮事件
     bindBlockControlEvents(box);
 
@@ -1767,7 +1966,7 @@
     `;
     const fixed = Array.from(box.querySelectorAll('.row')).slice(0, startIndex).map(n=>n.outerHTML).join('');
     box.innerHTML = headHtml + controls + fixed + rows + kv;
-    
+
     // 重新绑定控制按钮事件
     bindBlockControlEvents(box);
 
@@ -1800,7 +1999,7 @@
     const selectNoneBtn = container.querySelector('#ao3x-select-none');
     const selectInvertBtn = container.querySelector('#ao3x-select-invert');
     const retrySelectedBtn = container.querySelector('#ao3x-retry-selected');
-    
+
     if (selectAllBtn) {
       selectAllBtn.addEventListener('click', () => {
         const checkboxes = container.querySelectorAll('.ao3x-block-checkbox input[type="checkbox"]');
@@ -1808,7 +2007,7 @@
         UI.toast(`已选择 ${checkboxes.length} 个块`);
       });
     }
-    
+
     if (selectNoneBtn) {
       selectNoneBtn.addEventListener('click', () => {
         const checkboxes = container.querySelectorAll('.ao3x-block-checkbox input[type="checkbox"]');
@@ -1816,7 +2015,7 @@
         UI.toast('已取消全部选择');
       });
     }
-    
+
     if (selectInvertBtn) {
       selectInvertBtn.addEventListener('click', () => {
         const checkboxes = container.querySelectorAll('.ao3x-block-checkbox input[type="checkbox"]');
@@ -1828,7 +2027,7 @@
         UI.toast(`已反选，当前选中 ${selectedCount} 个块`);
       });
     }
-    
+
     if (retrySelectedBtn) {
       retrySelectedBtn.addEventListener('click', () => {
         const checkboxes = container.querySelectorAll('.ao3x-block-checkbox input[type="checkbox"]:checked');
@@ -1836,12 +2035,12 @@
           const index = cb.getAttribute('data-block-index');
           return parseInt(index, 10);
         }).filter(i => !isNaN(i));
-        
+
         if (selectedIndices.length === 0) {
           UI.toast('请先选择要重试的块');
           return;
         }
-        
+
         Controller.retrySelectedBlocks(selectedIndices);
       });
     }
@@ -2077,33 +2276,33 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         UI.toast('未选择要重试的块');
         return;
       }
-      
+
       const s = settings.get();
       UI.toast(`开始重试 ${selectedIndices.length} 个选中块…`);
-      
+
       const c = document.querySelector('#ao3x-render');
       if (!c) {
         UI.toast('未找到渲染容器');
         return;
       }
-      
+
       // 彻底清理选中块的所有缓存和状态
       selectedIndices.forEach(i => {
         // 清除TransStore中的旧翻译和完成状态
         TransStore.set(String(i), '');
         if (TransStore._done) delete TransStore._done[i];
-        
+
         // 清理RenderState中的应用状态
         if (RenderState && RenderState.lastApplied) {
           RenderState.lastApplied[i] = '';
         }
-        
+
         // 清理Streamer中的缓冲区
         if (typeof Streamer !== 'undefined' && Streamer._buf) {
           Streamer._buf[i] = '';
           Streamer._dirty[i] = false;
         }
-        
+
         // 重置DOM显示为待译状态
         const anchor = c.querySelector(`[data-chunk-id="${i}"]`);
         if (anchor) {
@@ -2115,18 +2314,18 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
           }
         }
       });
-      
+
       // 构造子计划（复用 data-original-html）
       const subPlan = selectedIndices.map(i => {
         const block = c.querySelector(`.ao3x-block[data-index="${i}"]`);
         const html = block ? (block.getAttribute('data-original-html') || '') : '';
         return { index: i, html };
       });
-      
+
       // 状态计数
       let inFlight = 0, completed = 0, failed = 0;
       updateKV({ 重试进行中: inFlight, 重试完成: completed, 重试失败: failed });
-      
+
       const postOne = (idx) => {
         const planItem = subPlan.find(p => p.index === idx);
         if (!planItem || !planItem.html) {
@@ -2134,11 +2333,11 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
           updateKV({ 重试进行中: inFlight, 重试完成: completed, 重试失败: failed });
           return;
         }
-        
+
         const label = `retry-selected#${idx}`;
-        inFlight++; 
+        inFlight++;
         updateKV({ 重试进行中: inFlight, 重试完成: completed, 重试失败: failed });
-        
+
         postChatWithRetry({
           endpoint: resolveEndpoint(s.api.baseUrl, s.api.path),
           key: s.api.key,
@@ -2154,34 +2353,34 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
           },
           stream: s.stream.enabled,
           label,
-          onDelta: (delta) => { 
-            Streamer.push(idx, delta, (k, clean) => { 
-              TransStore.set(String(k), clean); 
+          onDelta: (delta) => {
+            Streamer.push(idx, delta, (k, clean) => {
+              TransStore.set(String(k), clean);
               // 只有当前顺序渲染的块才能实时显示，其他块仅缓存
               if (RenderState.canRender(k)) {
                 RenderState.applyIncremental(k, clean);
               }
-            }); 
+            });
           },
-          onFinishReason: (fr) => { 
+          onFinishReason: (fr) => {
             d('retry-selected:finish_reason', {idx, fr});
             handleFinishReason(fr, `retry-selected#${idx}`);
           },
           onDone: () => {
             TransStore.markDone(idx);
             inFlight--; completed++;
-            Streamer.done(idx, (k, clean) => { 
-              TransStore.set(String(k), clean); 
+            Streamer.done(idx, (k, clean) => {
+              TransStore.set(String(k), clean);
               // 只有当前顺序渲染的块才能实时显示，其他块仅缓存
               if (RenderState.canRender(k)) {
                 RenderState.applyIncremental(k, clean);
               }
             });
-            
+
             // 若正好轮到该块，也推进一次顺序渲染
             if (RenderState.canRender(idx)) RenderState.finalizeCurrent();
             updateKV({ 重试进行中: inFlight, 重试完成: completed, 重试失败: failed });
-            
+
             // 检查是否所有选中的块都完成了
             if (completed + failed >= selectedIndices.length) {
               // 清理状态显示，恢复正常显示
@@ -2206,10 +2405,10 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
             if (RenderState.canRender(idx)) {
               RenderState.applyIncremental(idx, msg);
             }
-            
+
             if (RenderState.canRender(idx)) RenderState.finalizeCurrent();
             updateKV({ 重试进行中: inFlight, 重试完成: completed, 重试失败: failed });
-            
+
             // 检查是否所有选中的块都完成了
             if (completed + failed >= selectedIndices.length) {
               // 清理状态显示，恢复正常显示
@@ -2227,53 +2426,53 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
           }
         });
       };
-      
+
       // 按设置并发数重试选中的块
       const conc = Math.max(1, Math.min(4, s.concurrency || 2));
       let ptr = 0;
-      
+
       const processNext = () => {
         while (ptr < selectedIndices.length) {
           const i = selectedIndices[ptr++];
           postOne(i);
-          
+
           // 达到并发限制时暂停
           if (inFlight >= conc) {
             break;
           }
         }
-        
+
         // 如果还有未处理的块，稍后继续
         if (ptr < selectedIndices.length && inFlight < conc) {
           setTimeout(processNext, 100);
         }
       };
-      
+
       // 开始处理
       processNext();
-      
+
       // 监控完成状态
       const checkCompletion = () => {
         if (completed + failed >= selectedIndices.length) {
           UI.toast(`选中块重试完成：成功 ${completed}，失败 ${failed}`);
-          
+
           // 最后兜底刷新
           finalFlushAll(RenderState.total || 0);
-          
+
           // 如果是双语模式且可以渲染，更新双语视图
-          try { 
+          try {
             if (View && View.mode === 'bi' && Bilingual.canRender()) {
-              View.renderBilingual(); 
-            } 
+              View.renderBilingual();
+            }
           } catch {}
-          
+
           return;
         }
-        
+
         // 如果未完成，继续监控
         setTimeout(checkCompletion, 500);
       };
-      
+
       // 开始监控完成状态
       setTimeout(checkCompletion, 500);
     },
@@ -2321,7 +2520,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
           stream: s.stream.enabled,
           label,
           onDelta: (delta) => { Streamer.push(idx, delta, (k, clean)=>{ TransStore.set(String(k), clean); Controller.applyDirect(k, clean); }); },
-          onFinishReason: (fr)=>{ 
+          onFinishReason: (fr)=>{
             d('retry:finish_reason', {idx, fr});
             handleFinishReason(fr, `retry#${idx}`);
           },
@@ -2484,7 +2683,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         },
         label:`single#${i}`,
         onDelta: (delta)=>{ Streamer.push(i, delta, (k, clean)=>{ View.setBlockTranslation(k, clean); }); },
-        onFinishReason: (fr)=>{ 
+        onFinishReason: (fr)=>{
           d('finish_reason', {i, fr});
           handleFinishReason(fr, `single#${i}`);
         },
@@ -2579,7 +2778,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
                     stream: !!settings.get().stream.enabled
                   },
                   onDelta: (delta)=>{ Streamer.push(i, delta, (k, clean)=>{ View.setBlockTranslation(k, clean); }); },
-                  onFinishReason: (fr2)=>{ 
+                  onFinishReason: (fr2)=>{
                     d('finish_reason(second)', {i, fr2});
                     handleFinishReason(fr2, `chunk#${i}-retry-max`);
                   },
@@ -2738,7 +2937,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         const config = this.getSummaryConfig();
         const allHtml = nodes.map(n => n.innerHTML);
         const fullHtml = allHtml.join('\n');
-        
+
         // 使用总结专用的比例计算分块
         const ratio = config.ratioTextToSummary;
         const reserve = s.planner?.reserve ?? 384;
@@ -2755,7 +2954,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
 
         const cw = s.model.contextWindow || 8192;
         const maxT = s.gen.maxTokens || 1024;
-        
+
         // 总结通常比翻译需要更少的输出token
         const cap1 = maxT / ratio;
         const cap2 = (cw - promptTokens - reserve) / (1 + ratio);
@@ -2818,7 +3017,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
 
         View.clearInfo();
         UI.toast('总结完成');
-        
+
       } catch (e) {
         d('summary:fatal', e);
         UI.toast('总结失败：' + e.message);
@@ -2831,24 +3030,22 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
     // 渲染总结计划界面
     renderSummaryPlan(plan) {
       const c = ensureRenderContainer();
-      // 使用独立的总结计划容器，插入到翻译计划与翻译内容之间
-      let box = $('#ao3x-summary-plan', c);
-      if (!box) {
-        box = document.createElement('div');
-        box.id = 'ao3x-summary-plan';
-        box.className = 'ao3x-plan';
-        // 插入位置：在翻译计划(#ao3x-plan)之后、第一块翻译内容(.ao3x-block)之前
-        const planBox = $('#ao3x-plan', c);
-        const firstTransBlock = c.querySelector('.ao3x-block:not(.ao3x-summary-block)');
-        if (planBox && planBox.nextSibling) {
-          planBox.parentNode.insertBefore(box, planBox.nextSibling);
-        } else if (firstTransBlock) {
-          c.insertBefore(box, firstTransBlock);
+
+      // 1. 创建总结计划容器，放在最前面（翻译计划之前）
+      let summaryPlanBox = $('#ao3x-summary-plan', c);
+      if (!summaryPlanBox) {
+        summaryPlanBox = document.createElement('div');
+        summaryPlanBox.id = 'ao3x-summary-plan';
+        summaryPlanBox.className = 'ao3x-plan';
+        // 插入到容器最前面，翻译计划之前
+        const existingPlan = $('#ao3x-plan', c);
+        if (existingPlan) {
+          c.insertBefore(summaryPlanBox, existingPlan);
         } else {
-          c.appendChild(box);
+          c.insertBefore(summaryPlanBox, c.firstChild);
         }
       }
-      
+
       const rows = plan.map((p, i) => {
         const text = stripHtmlToText(p.text || p.html);
         const head = text.slice(0, 48);
@@ -2856,32 +3053,41 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         const estIn = p.inTok != null ? p.inTok : 0;
         return `<div class="row"><b>#${i}</b> <span class="ao3x-small">in≈${estIn}</span> ｜ <span class="ao3x-small">开头：</span>${escapeHTML(head)} <span class="ao3x-small">结尾：</span>${escapeHTML(tail)}</div>`;
       }).join('');
-      
-      box.innerHTML = `<h4>总结计划：共 ${plan.length} 段</h4>${rows}<div class="ao3x-kv" id="ao3x-summary-kv"></div>`;
-      
-      // 为每个块创建总结渲染容器（插入到翻译计划与翻译内容之间）
-      const firstTransBlock = c.querySelector('.ao3x-block:not(.ao3x-summary-block)');
+
+      summaryPlanBox.innerHTML = `<h4>总结计划：共 ${plan.length} 段</h4>${rows}<div class="ao3x-kv" id="ao3x-summary-kv"></div>`;
+
+      // 2. 创建总结内容容器，放在总结计划之后，翻译计划之前
+      let summaryContentContainer = $('#ao3x-summary-content-container', c);
+      if (!summaryContentContainer) {
+        summaryContentContainer = document.createElement('div');
+        summaryContentContainer.id = 'ao3x-summary-content-container';
+        summaryContentContainer.className = 'ao3x-summary-container';
+        // 插入到总结计划之后
+        summaryPlanBox.insertAdjacentElement('afterend', summaryContentContainer);
+      }
+
+      // 清空总结内容容器（避免重复添加）
+      summaryContentContainer.innerHTML = '';
+
+      // 3. 在总结内容容器中创建每个总结块
       plan.forEach((p, i) => {
         const wrapper = document.createElement('div');
         wrapper.className = 'ao3x-block ao3x-summary-block';
         wrapper.setAttribute('data-summary-index', String(i));
         wrapper.setAttribute('data-original-html', p.html);
-        
+
         const anchor = document.createElement('span');
         anchor.className = 'ao3x-anchor';
         anchor.setAttribute('data-summary-chunk-id', String(i));
         wrapper.appendChild(anchor);
-        
+
         const div = document.createElement('div');
         div.className = 'ao3x-summary-content';
-        div.innerHTML = '\u003cspan class=\"ao3x-muted\"\u003e（待总结）\u003c/span\u003e';
+        div.innerHTML = '<span class="ao3x-muted">（待总结）</span>';
         wrapper.appendChild(div);
-        
-        if (firstTransBlock && firstTransBlock.parentNode) {
-          firstTransBlock.parentNode.insertBefore(wrapper, firstTransBlock);
-        } else {
-          c.appendChild(wrapper);
-        }
+
+        // 将总结块添加到总结内容容器中
+        summaryContentContainer.appendChild(wrapper);
       });
     },
 
@@ -2904,7 +3110,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       const c = ensureRenderContainer();
       const anchor = c.querySelector(`[data-summary-chunk-id="${i}"]`);
       if (!anchor) return;
-      
+
       let contentDiv = anchor.parentElement.querySelector('.ao3x-summary-content');
       if (!contentDiv) {
         contentDiv = document.createElement('div');
@@ -2912,10 +3118,10 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         contentDiv.style.minHeight = '40px'; // 防止跳动
         anchor.insertAdjacentElement('afterend', contentDiv);
       }
-      
+
       const prev = this._renderState.lastApplied[i] || '';
       const hasPlaceholder = /\(待总结\)/.test(contentDiv.textContent || '');
-      
+
       if (!prev || hasPlaceholder) {
         requestAnimationFrame(() => {
           contentDiv.innerHTML = cleanContent || '<span class="ao3x-muted">（待总结）</span>';
@@ -2923,7 +3129,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         });
         return;
       }
-      
+
       if (cleanContent.startsWith(prev)) {
         const tail = cleanContent.slice(prev.length);
         if (tail) {
@@ -2944,18 +3150,18 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
     finalizeCurrent() {
       while (this._renderState.nextToRender < this._renderState.total) {
         const i = this._renderState.nextToRender;
-        
+
         // 获取当前段落的内容
         const cached = SummaryStore.get(String(i)) || '';
         if (cached) this.applyIncremental(i, cached);
-        
+
         // 检查是否已完成
         const isDone = !!(SummaryStore._done && SummaryStore._done[i]);
         if (isDone) {
           this._renderState.nextToRender++;
           continue;
         }
-        
+
         // 当前段落未完成，停止推进
         break;
       }
@@ -2965,7 +3171,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
     updateSummaryKV(kv) {
       const kvElement = document.querySelector('#ao3x-summary-kv');
       if (!kvElement) return;
-      kvElement.innerHTML = Object.entries(kv).map(([k, v]) => 
+      kvElement.innerHTML = Object.entries(kv).map(([k, v]) =>
         `<span>${k}: ${escapeHTML(String(v))}</span>`
       ).join('');
     },
@@ -2975,13 +3181,13 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       const predictedOut = Math.ceil(inTok * ratio);
       const outCapByCw = Math.max(256, modelCw - promptTokens - inTok - reserve);
       const maxTokensLocal = Math.max(256, Math.min(userMaxTokens, outCapByCw, predictedOut));
-      
+
       d('summary:single:tokens', { inTok, predictedOut, outCapByCw, userMaxTokens, maxTokensLocal });
       if (maxTokensLocal < 256) throw new Error('上下文空间不足，无法进行总结');
 
       const i = 0;
       this.updateSummaryKV({ 状态: '正在总结', 进度: '1/1' });
-      
+
       await postChatWithRetry({
         endpoint,
         key,
@@ -2998,8 +3204,8 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         },
         label: `summary-single#${i}`,
         onDelta: (delta) => {
-          // 复用通用 Streamer，保证与翻译部分一致的节流与去重
-          Streamer.push(i, delta, (k, clean) => {
+          // 使用专用的 SummaryStreamer，与翻译分离缓冲区
+          SummaryStreamer.push(i, delta, (k, clean) => {
             SummaryStore.set(String(k), clean);
             if (this.canRender(k)) {
               this.applyIncremental(k, clean);
@@ -3012,8 +3218,8 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         },
         onDone: () => {
           SummaryStore.markDone(i);
-          // 使用通用 Streamer 的完成快照，确保最后一帧一致
-          Streamer.done(i, (k, clean) => {
+          // 使用专用 SummaryStreamer 的完成快照，确保最后一帧一致
+          SummaryStreamer.done(i, (k, clean) => {
             SummaryStore.set(String(k), clean);
             if (this.canRender(k)) {
               this.applyIncremental(k, clean);
@@ -3034,14 +3240,14 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
           const msg = `<p class="ao3x-muted">[总结失败：${e.message}]</p>`;
           SummaryStore.set(String(i), msg);
           SummaryStore.markDone(i);
-          
+
           if (this.canRender(i)) {
             this.applyIncremental(i, msg);
           }
-          
+
           this.finalizeCurrent();
           this.updateSummaryKV({ 状态: '失败', 错误: e.message });
-          
+
           throw e;
         }
       });
@@ -3051,26 +3257,26 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
     async summarizeConcurrent({ endpoint, key, plan, concurrency, stream, modelCw, ratio, promptTokens, reserve, userMaxTokens, config }) {
       const N = plan.length;
       this.initRenderState(N);
-      
+
       let inFlight = 0, nextToStart = 0, completed = 0, failed = 0;
-      const startNext = () => { 
-        while (inFlight < concurrency && nextToStart < plan.length) { 
-          startChunk(nextToStart++); 
-        } 
+      const startNext = () => {
+        while (inFlight < concurrency && nextToStart < plan.length) {
+          startChunk(nextToStart++);
+        }
       };
-      
+
       const startChunk = (i) => {
         const inputTok = plan[i].inTok != null ? plan[i].inTok : 0;
         const predictedOut = Math.ceil(inputTok * ratio);
         const outCapByCw = Math.max(256, modelCw - promptTokens - inputTok - reserve);
         const maxTokensLocal = Math.max(256, Math.min(userMaxTokens, outCapByCw, predictedOut));
         const label = `summary-chunk#${i}`;
-        
+
         inFlight++;
         this.updateSummaryKV({ 进行中: inFlight, 完成: completed, 失败: failed, 进度: `${completed}/${N}` });
-        
+
         d('summary:chunk:start', { i, inFlight, nextToStart, inputTok, predictedOut, outCapByCw, maxTokensLocal });
-        
+
         postChatWithRetry({
           endpoint,
           key,
@@ -3087,8 +3293,8 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
           stream,
           label,
           onDelta: (delta) => {
-            // 复用通用 Streamer，保证与翻译部分一致的节流与去重
-            Streamer.push(i, delta, (k, clean) => {
+            // 使用专用的 SummaryStreamer，与翻译分离缓冲区
+            SummaryStreamer.push(i, delta, (k, clean) => {
               SummaryStore.set(String(k), clean);
               if (this.canRender(k)) {
                 this.applyIncremental(k, clean);
@@ -3101,13 +3307,13 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
           },
           onDone: () => {
             SummaryStore.markDone(i);
-            inFlight--; 
+            inFlight--;
             completed++;
-            
+
             d('summary:chunk:done', { i });
-            
-            // 使用通用 Streamer 的完成快照，确保最后一帧一致
-            Streamer.done(i, (k, clean) => {
+
+            // 使用专用 SummaryStreamer 的完成快照，确保最后一帧一致
+            SummaryStreamer.done(i, (k, clean) => {
               SummaryStore.set(String(k), clean);
               if (this.canRender(k)) {
                 this.applyIncremental(k, clean);
@@ -3119,46 +3325,46 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
               const finalContent = SummaryStore.get(String(i)) || '';
               if (finalContent && this.canRender(i)) this.applyIncremental(i, finalContent);
             } catch {}
-            
+
             this.finalizeCurrent();
             this.updateSummaryKV({ 进行中: inFlight, 完成: completed, 失败: failed, 进度: `${completed}/${N}` });
             startNext();
           },
           onError: (e) => {
-            inFlight--; 
+            inFlight--;
             failed++;
-            
+
             d('summary:chunk:error', { i, err: e.message });
-            
+
             const msg = `<p class="ao3x-muted">[总结失败：${e.message}]</p>`;
             SummaryStore.set(String(i), msg);
             SummaryStore.markDone(i);
-            
+
             if (this.canRender(i)) {
               this.applyIncremental(i, msg);
             }
-            
+
             this.finalizeCurrent();
             this.updateSummaryKV({ 进行中: inFlight, 完成: completed, 失败: failed, 进度: `${completed}/${N}` });
             startNext();
           }
         });
       };
-      
+
       // 启动并发处理
       startNext();
-      
+
       // 等待所有分段完成
       while (this._renderState.nextToRender < plan.length) {
         await sleep(80);
       }
-      
+
       d('summary:concurrent:completed', { total: N, completed, failed });
     }
   };
 
   /* ================= Streamer（增量 + 有序；含实时快照） ================= */
-  const Streamer = {
+  const createStreamer = () => ({
     _buf: Object.create(null),
     _dirty: Object.create(null),
     _raf: null,
@@ -3199,7 +3405,11 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       };
       this._raf = requestAnimationFrame(tick);
     }
-  };
+  });
+
+  // Create separate instances for translation and summary
+  const Streamer = createStreamer();
+  const SummaryStreamer = createStreamer();
 
   /* ================= 兜底：终局强制刷新 ================= */
   function finalFlushAll(total){
