@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结（移动端 Safari / Tampermonkey）
 // @namespace    https://ao3-translate.example
-// @version      0.7.7
+// @version      0.7.8
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -3193,12 +3193,12 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         key,
         stream,
         payload: {
-          model: settings.get().model.id,
+          model: settings.get().summary?.model?.id || settings.get().model.id,
           messages: [
             { role: 'system', content: config.system },
             { role: 'user', content: config.userTemplate.replace('{{content}}', contentHtml) }
           ],
-          temperature: settings.get().gen.temperature,
+          temperature: settings.get().summary?.gen?.temperature || settings.get().gen.temperature,
           max_tokens: maxTokensLocal,
           stream: !!settings.get().stream.enabled
         },
@@ -3281,12 +3281,12 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
           endpoint,
           key,
           payload: {
-            model: settings.get().model.id,
+            model: settings.get().summary?.model?.id || settings.get().model.id,
             messages: [
               { role: 'system', content: config.system },
               { role: 'user', content: config.userTemplate.replace('{{content}}', plan[i].html) }
             ],
-            temperature: settings.get().gen.temperature,
+            temperature: settings.get().summary?.gen?.temperature || settings.get().gen.temperature,
             max_tokens: maxTokensLocal,
             stream: !!settings.get().stream.enabled
           },
