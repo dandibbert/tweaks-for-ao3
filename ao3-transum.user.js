@@ -1,12 +1,14 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结（移动端 Safari / Tampermonkey）
 // @namespace    https://ao3-translate.example
-// @version      0.7.9
+// @version      0.8.1
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_deleteValue
+// @grant        GM_listValues
 // @grant        GM_addStyle
 // @grant        GM_xmlhttpRequest
 // @run-at       document-idle
@@ -64,6 +66,8 @@
   };
   function GM_Get(k){ try{ return GM_getValue(k); }catch{ try{ return JSON.parse(localStorage.getItem(k)||'null'); }catch{ return null; } } }
   function GM_Set(k,v){ try{ GM_setValue(k,v); }catch{ try{ localStorage.setItem(k, JSON.stringify(v)); }catch{} } }
+  function GM_Del(k){ try{ GM_deleteValue(k); }catch{ try{ localStorage.removeItem(k); }catch{} } }
+  function GM_ListKeys(){ try{ return (typeof GM_listValues === 'function') ? GM_listValues() : Object.keys(localStorage); }catch{ try{ return Object.keys(localStorage); }catch{ return []; } } }
 
 
   const d = (...args) => { if (settings.get().debug) console.log('[AO3X]', ...args); };
@@ -502,6 +506,14 @@
                 <span class="ao3x-switch-label">调试模式</span>
               </label>
             </div>
+            <div class="ao3x-field">
+              <label>存储管理</label>
+              <div class="ao3x-input-group">
+                <button id="ao3x-list-storage" class="ao3x-btn-secondary">查看翻译缓存键</button>
+                <button id="ao3x-clear-all-cache" class="ao3x-btn-secondary">清理所有翻译缓存</button>
+              </div>
+              <span class="ao3x-hint">作用域：本脚本使用的翻译缓存（键前缀 ao3_translator_）。</span>
+            </div>
           </div>
         </div>
       `;
@@ -559,6 +571,30 @@
       panel.addEventListener('input', debounce(autosave, 300), true);
       panel.addEventListener('change', autosave, true);
       panel.addEventListener('blur', (e)=>{ if(panel.contains(e.target)) autosave(); }, true);
+
+      // 存储管理：列出与清理（GM 与 localStorage 双覆盖）
+      $('#ao3x-list-storage', panel)?.addEventListener('click', () => {
+        try{
+          const gmKeys = GM_ListKeys().filter(k => typeof k === 'string' && k.startsWith('ao3_translator_'));
+          const lsKeys = (function(){ try{ return Object.keys(localStorage).filter(k => k.startsWith('ao3_translator_')); }catch{ return []; } })();
+          const allKeys = Array.from(new Set([...(gmKeys||[]), ...(lsKeys||[])]));
+          if (!allKeys.length){ UI.toast('未发现翻译缓存键'); return; }
+          const lines = allKeys.slice(0,50).join('\n') + (allKeys.length>50?'\n…':'');
+          alert(`翻译缓存键（GM:${gmKeys.length} / LS:${lsKeys.length}）：\n${lines}`);
+        }catch(e){ UI.toast('读取存储键失败'); console.warn(e); }
+      });
+
+      $('#ao3x-clear-all-cache', panel)?.addEventListener('click', () => {
+        const gmKeys = GM_ListKeys().filter(k => typeof k === 'string' && k.startsWith('ao3_translator_'));
+        const lsKeys = (function(){ try{ return Object.keys(localStorage).filter(k => k.startsWith('ao3_translator_')); }catch{ return []; } })();
+        const total = (gmKeys?.length||0) + (lsKeys?.length||0);
+        if (!total){ UI.toast('没有可清理的翻译缓存'); return; }
+        if (!confirm(`将清理 GM:${gmKeys.length} / LS:${lsKeys.length} 个翻译缓存，是否继续？`)) return;
+        let removedGM = 0, removedLS = 0;
+        for (const k of gmKeys){ try{ GM_Del(k); removedGM++; }catch{} }
+        for (const k of lsKeys){ try{ localStorage.removeItem(k); removedLS++; }catch{} }
+        UI.toast(`清理完成 GM:${removedGM} / LS:${removedLS}`);
+      });
 
       UI._panel = panel; UI._mask = mask; UI.syncPanel();
     },
@@ -1603,13 +1639,12 @@
       this.loadFromCache();
     },
 
-    // 从localStorage加载缓存
+    // 从存储加载缓存（优先 GM 存储，回落 localStorage 由 GM_Get 封装处理）
     loadFromCache() {
       if (!this._cacheKey) return;
       try {
-        const cached = localStorage.getItem(this._cacheKey);
-        if (cached) {
-          const data = JSON.parse(cached);
+        const data = GM_Get(this._cacheKey);
+        if (data && typeof data === 'object') {
           this._map = data._map || Object.create(null);
           this._done = data._done || Object.create(null);
         }
@@ -1618,7 +1653,7 @@
       }
     },
 
-    // 保存到localStorage
+    // 保存到存储（优先 GM 存储，回落 localStorage 由 GM_Set 封装处理）
     saveToCache() {
       if (!this._cacheKey) return;
       try {
@@ -1627,7 +1662,7 @@
           _done: this._done,
           timestamp: Date.now()
         };
-        localStorage.setItem(this._cacheKey, JSON.stringify(data));
+        GM_Set(this._cacheKey, data);
       } catch (e) {
         console.warn('Failed to save translation cache:', e);
       }
@@ -1636,7 +1671,7 @@
     // 清除缓存
     clearCache() {
       if (this._cacheKey) {
-        localStorage.removeItem(this._cacheKey);
+        GM_Del(this._cacheKey);
       }
       this.clear();
     },
@@ -1645,9 +1680,8 @@
     hasCache() {
       if (!this._cacheKey) return false;
       try {
-        const cached = localStorage.getItem(this._cacheKey);
-        if (!cached) return false;
-        const data = JSON.parse(cached);
+        const data = GM_Get(this._cacheKey);
+        if (!data) return false;
         const map = data._map || {};
         const done = data._done || {};
         // 检查是否有任何翻译内容
@@ -1661,9 +1695,8 @@
     getCacheInfo() {
       if (!this._cacheKey) return { hasCache: false, total: 0, completed: 0 };
       try {
-        const cached = localStorage.getItem(this._cacheKey);
-        if (!cached) return { hasCache: false, total: 0, completed: 0 };
-        const data = JSON.parse(cached);
+        const data = GM_Get(this._cacheKey);
+        if (!data) return { hasCache: false, total: 0, completed: 0 };
         const map = data._map || {};
         const done = data._done || {};
         return {
