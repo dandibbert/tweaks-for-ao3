@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结（移动端 Safari / Tampermonkey）
 // @namespace    https://ao3-translate.example
-// @version      0.8.1
+// @version      0.8.2
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -1647,7 +1647,20 @@
         if (data && typeof data === 'object') {
           this._map = data._map || Object.create(null);
           this._done = data._done || Object.create(null);
+          return;
         }
+        // GM 无数据时，尝试从 localStorage 读取并迁移
+        try {
+          const cached = localStorage.getItem(this._cacheKey);
+          if (cached) {
+            const dataLS = JSON.parse(cached);
+            this._map = dataLS._map || Object.create(null);
+            this._done = dataLS._done || Object.create(null);
+            // 迁移到 GM，并清理 LS
+            try { GM_Set(this._cacheKey, { _map: this._map, _done: this._done, timestamp: Date.now() }); } catch {}
+            try { localStorage.removeItem(this._cacheKey); } catch {}
+          }
+        } catch {}
       } catch (e) {
         console.warn('Failed to load translation cache:', e);
       }
@@ -1681,11 +1694,25 @@
       if (!this._cacheKey) return false;
       try {
         const data = GM_Get(this._cacheKey);
-        if (!data) return false;
-        const map = data._map || {};
-        const done = data._done || {};
-        // 检查是否有任何翻译内容
-        return Object.keys(map).length > 0;
+        if (data) {
+          const map = data._map || {};
+          return Object.keys(map).length > 0;
+        }
+        // GM 无数据时，尝试读取 LS 并顺便迁移
+        try {
+          const cached = localStorage.getItem(this._cacheKey);
+          if (!cached) return false;
+          const dataLS = JSON.parse(cached);
+          const map = dataLS._map || {};
+          if (Object.keys(map).length > 0) {
+            try { GM_Set(this._cacheKey, { _map: map, _done: dataLS._done || {}, timestamp: Date.now() }); } catch {}
+            try { localStorage.removeItem(this._cacheKey); } catch {}
+            return true;
+          }
+          return false;
+        } catch {
+          return false;
+        }
       } catch (e) {
         return false;
       }
@@ -1696,14 +1723,33 @@
       if (!this._cacheKey) return { hasCache: false, total: 0, completed: 0 };
       try {
         const data = GM_Get(this._cacheKey);
-        if (!data) return { hasCache: false, total: 0, completed: 0 };
-        const map = data._map || {};
-        const done = data._done || {};
-        return {
-          hasCache: Object.keys(map).length > 0,
-          total: Object.keys(map).length,
-          completed: Object.keys(done).length
-        };
+        if (data) {
+          const map = data._map || {};
+          const done = data._done || {};
+          return {
+            hasCache: Object.keys(map).length > 0,
+            total: Object.keys(map).length,
+            completed: Object.keys(done).length
+          };
+        }
+        // GM 无数据时，尝试读取 LS 并迁移
+        try {
+          const cached = localStorage.getItem(this._cacheKey);
+          if (!cached) return { hasCache: false, total: 0, completed: 0 };
+          const dataLS = JSON.parse(cached);
+          const map = dataLS._map || {};
+          const done = dataLS._done || {};
+          // 迁移
+          try { GM_Set(this._cacheKey, { _map: map, _done: done, timestamp: Date.now() }); } catch {}
+          try { localStorage.removeItem(this._cacheKey); } catch {}
+          return {
+            hasCache: Object.keys(map).length > 0,
+            total: Object.keys(map).length,
+            completed: Object.keys(done).length
+          };
+        } catch {
+          return { hasCache: false, total: 0, completed: 0 };
+        }
       } catch (e) {
         return { hasCache: false, total: 0, completed: 0 };
       }
