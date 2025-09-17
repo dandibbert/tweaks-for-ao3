@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         AO3 全文翻译+总结（移动端 Safari / Tampermonkey）
+// @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      0.8.2
+// @version      0.8.5
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -31,8 +31,8 @@
         reasoningEffort: -1  // -1不发送, 'none'/'low'/'medium'/'high'才发送
       },
       prompt: {
-        system: '你是专业的文学翻译助手。请保持 AO3 文本结构、段落层次、行内格式（粗体、斜体、链接），人名不做翻译，术语翻译时意译，以保证不了解者也能看懂为准则，语气自然流畅。',
-        userTemplate: '请将以下 AO3 正文完整翻译为中文，人名保持原文，术语翻译时意译，以保证不了解者也能看懂为准则，保持 HTML 结构与行内标记，仅替换可见文本内容：\n{{content}}\n（请直接返回 HTML 片段，不要使用代码块或转义。）'
+        system: '你是专业的文学翻译助手。请保持 AO3 文本结构、段落层次、行内格式（粗体、斜体、链接），人名不做翻译，术语翻译时意译，以保证不了解者也能看懂为准则，语气自然流畅。可以调整语序用词，但不要省略有实质性内容的语句。请保证译文地道，自然，有韵味，符合原文语气和上下文情境。',
+        userTemplate: '你是一个专业的文学翻译助手，请将以下 AO3 正文完整翻译为中文，保证译文地道，自然，有韵味，符合原文语气和上下文情境。人名不做翻译，术语翻译时意译，以保证不了解者也能看懂为准则，保持 HTML 结构与行内标记，仅替换可见文本内容，不要漏翻除人名外的英文内容：\n{{content}}\n（请直接返回 HTML 片段，不要使用代码块或转义。）'
       },
       summary: {
         model: { id: '', contextWindow: 16000 },
@@ -165,8 +165,11 @@
 
       // 长按功能变量
       let longPressTimer = null;
-      let isLongPress = false;
+      let longPressTriggered = false;
+      let pointerHandledUntil = 0;
       let isMenuVisible = false;
+      const TAP_SUPPRESS_MS = 350;
+      const LONG_PRESS_SUPPRESS_MS = 1000;
 
       // 显示/隐藏悬浮菜单
       const showFloatingMenu = () => {
@@ -191,52 +194,75 @@
         }, 200);
       };
 
+      const now = () => (typeof performance !== 'undefined' && typeof performance.now === 'function') ? performance.now() : Date.now();
+
+      const markPointerHandled = (duration = 800) => {
+        pointerHandledUntil = Math.max(pointerHandledUntil, now() + duration);
+      };
+
+      const pointerHandledActive = () => now() < pointerHandledUntil;
+
       const startLongPress = () => {
-        isLongPress = false;
+        longPressTriggered = false;
+        clearTimeout(longPressTimer);
         longPressTimer = setTimeout(() => {
-          isLongPress = true;
+          longPressTriggered = true;
           showFloatingMenu();
         }, 800); // 0.8秒长按
       };
 
-      const cancelLongPress = () => {
+      const finishLongPress = () => {
         clearTimeout(longPressTimer);
-        // 长按完成后不要立即隐藏菜单，让用户可以点击
-        // 重置长按状态需要延迟，避免影响click事件
-        setTimeout(() => {
-          isLongPress = false;
-        }, 50);
+        const wasLongPress = longPressTriggered;
+        longPressTriggered = false;
+        return wasLongPress;
+      };
+
+      const cancelLongPress = () => {
+        finishLongPress();
       };
 
       // iOS Safari文本选择防护
       const preventSelection = (e) => {
-        // 检查是否有target和closest方法
-        if (e.target && typeof e.target.closest === 'function') {
-          if (e.target.closest('.ao3x-btn')) {
-            e.preventDefault();
-            e.stopPropagation();
-            return false;
-          }
-        } else if (e.target) {
-          // 向上遍历DOM树查找匹配的元素（兼容性fallback）
-          let element = e.target;
-          while (element && element !== document) {
-            if (element.classList && element.classList.contains('ao3x-btn')) {
-              e.preventDefault();
-              e.stopPropagation();
-              return false;
+        const target = e.target;
+        if (!target) return;
+        let btn = null;
+        if (typeof target.closest === 'function') {
+          btn = target.closest('.ao3x-btn');
+        } else {
+          let el = target;
+          while (el && el !== document) {
+            if (el.classList && el.classList.contains('ao3x-btn')) {
+              btn = el;
+              break;
             }
-            element = element.parentNode;
+            el = el.parentNode;
           }
         }
+        if (!btn) return;
+        if (e.type === 'touchstart') return; // 允许触摸事件冒泡以保证点击触发
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
       };
 
       // 鼠标事件（桌面）
       btnTranslate.addEventListener('mousedown', (e) => {
+        if (e.button && e.button !== 0) return;
         preventSelection(e);
         startLongPress();
       });
-      btnTranslate.addEventListener('mouseup', cancelLongPress);
+      btnTranslate.addEventListener('mouseup', (e) => {
+        if (e.button && e.button !== 0) return;
+        const wasLongPress = finishLongPress();
+        markPointerHandled(wasLongPress ? 1200 : 800);
+        if (wasLongPress) {
+          if (e.cancelable) e.preventDefault();
+        } else {
+          if (e.cancelable) e.preventDefault();
+          Controller.startTranslate();
+        }
+      });
       btnTranslate.addEventListener('mouseleave', () => {
         cancelLongPress();
         // 鼠标离开时也隐藏菜单
@@ -249,11 +275,20 @@
 
       // 触摸事件（移动设备）
       btnTranslate.addEventListener('touchstart', (e) => {
-        preventSelection(e);
         startLongPress();
+      }, { passive: true });
+      btnTranslate.addEventListener('touchend', (e) => {
+        const wasLongPress = finishLongPress();
+        markPointerHandled(wasLongPress ? 1400 : 800);
+        if (e.cancelable) e.preventDefault();
+        if (!wasLongPress) {
+          Controller.startTranslate();
+        }
+      }, { passive: false });
+      btnTranslate.addEventListener('touchcancel', () => {
+        finishLongPress();
+        markPointerHandled(800);
       });
-      btnTranslate.addEventListener('touchend', cancelLongPress);
-      btnTranslate.addEventListener('touchcancel', cancelLongPress);
 
       // 悬浮菜单事件
       floatingMenu.addEventListener('mouseleave', () => {
@@ -278,10 +313,12 @@
       document.addEventListener('touchstart', preventSelection);
 
       // 翻译按钮点击事件
-      btnTranslate.addEventListener('click', (e) => {
-        if (!isLongPress) {
-          Controller.startTranslate();
+      btnTranslate.addEventListener('click', (event) => {
+        if (event && event.detail === 0) {
+          pointerHandledUntil = 0;
         }
+        if (pointerHandledActive()) return;
+        Controller.startTranslate();
       });
 
       // 总结按钮事件
@@ -519,27 +556,42 @@
       `;
       document.body.appendChild(mask); document.body.appendChild(panel);
       panel.addEventListener('click', e => e.stopPropagation());
-      $('#ao3x-close-x', panel).addEventListener('click', UI.closePanel);
+      const closeBtn = $('#ao3x-close-x', panel);
+      if (closeBtn) {
+        closeBtn.addEventListener('click', UI.closePanel);
+      } else {
+        d('ui:close-btn-missing');
+      }
 
       const fetchBtn = $('#ao3x-fetch-models', panel);
       const fetchSummaryBtn = $('#ao3x-fetch-summary-models', panel);
       const translateBrowserBox = $('#ao3x-translate-model-browser', panel);
       const summaryBrowserBox = $('#ao3x-summary-model-browser', panel);
 
-      fetchBtn.addEventListener('click', async () => {
-        translateBrowserBox.style.display = 'block';
-        await ModelBrowser.fetchAndRender(panel, 'translate');
-        UI.toast('翻译模型列表已更新');
-      });
+      if (fetchBtn && translateBrowserBox) {
+        fetchBtn.addEventListener('click', async () => {
+          translateBrowserBox.style.display = 'block';
+          await ModelBrowser.fetchAndRender(panel, 'translate');
+          UI.toast('翻译模型列表已更新');
+        });
+      }
 
-      fetchSummaryBtn.addEventListener('click', async () => {
-        summaryBrowserBox.style.display = 'block';
-        await ModelBrowser.fetchAndRender(panel, 'summary');
-        UI.toast('总结模型列表已更新');
-      });
+      if (fetchSummaryBtn && summaryBrowserBox) {
+        fetchSummaryBtn.addEventListener('click', async () => {
+          summaryBrowserBox.style.display = 'block';
+          await ModelBrowser.fetchAndRender(panel, 'summary');
+          UI.toast('总结模型列表已更新');
+        });
+      }
 
-      $('#ao3x-translate-model-q', panel).addEventListener('input', () => ModelBrowser.filter(panel, 'translate'));
-      $('#ao3x-summary-model-q', panel).addEventListener('input', () => ModelBrowser.filter(panel, 'summary'));
+      const translateModelSearch = $('#ao3x-translate-model-q', panel);
+      if (translateModelSearch) {
+        translateModelSearch.addEventListener('input', () => ModelBrowser.filter(panel, 'translate'));
+      }
+      const summaryModelSearch = $('#ao3x-summary-model-q', panel);
+      if (summaryModelSearch) {
+        summaryModelSearch.addEventListener('input', () => ModelBrowser.filter(panel, 'summary'));
+      }
 
       const autosave = () => {
         // 检查翻译模型变更时的同步逻辑
@@ -557,16 +609,20 @@
       };
 
       // 专门监听翻译模型输入框的变化
-      $('#ao3x-translate-model', panel).addEventListener('input', debounce(() => {
-        const translateModel = $('#ao3x-translate-model', panel).value.trim();
-        const summaryModel = $('#ao3x-summary-model', panel).value.trim();
+      const translateModelInput = $('#ao3x-translate-model', panel);
+      if (translateModelInput) {
+        translateModelInput.addEventListener('input', debounce(() => {
+          const translateModel = $('#ao3x-translate-model', panel)?.value.trim() || '';
+          const summaryModel = $('#ao3x-summary-model', panel)?.value.trim() || '';
 
-        // 如果总结模型为空，则自动同步翻译模型的值
-        if (!summaryModel && translateModel) {
-          $('#ao3x-summary-model', panel).value = translateModel;
-        }
-        autosave();
-      }, 300));
+          // 如果总结模型为空，则自动同步翻译模型的值
+          if (!summaryModel && translateModel) {
+            const summaryInput = $('#ao3x-summary-model', panel);
+            if (summaryInput) summaryInput.value = translateModel;
+          }
+          autosave();
+        }, 300));
+      }
 
       panel.addEventListener('input', debounce(autosave, 300), true);
       panel.addEventListener('change', autosave, true);
@@ -736,7 +792,7 @@
       .ao3x-fab-wrap{position:fixed;right:12px;top:50%;transform:translateY(-50%);z-index:999999;display:flex;flex-direction:column;gap:8px;opacity:0.6;transition:opacity .3s;pointer-events:auto}
       .ao3x-fab-wrap:hover{opacity:1}
       .ao3x-fab-wrap.hidden{opacity:0;pointer-events:none}
-      .ao3x-btn{background:rgba(255,255,255,.9);color:var(--c-accent);border:1px solid rgba(229,229,229,.8);border-radius:var(--radius-full);padding:10px 14px;font-size:13px;font-weight:500;box-shadow:0 2px 8px rgba(0,0,0,.08);cursor:pointer;transition:all .2s;backdrop-filter:blur(8px)}
+      .ao3x-btn{background:rgba(255,255,255,.9);color:var(--c-accent);border:1px solid rgba(229,229,229,.8);border-radius:var(--radius-full);padding:10px 14px;font-size:13px;font-weight:500;box-shadow:0 2px 8px rgba(0,0,0,.08);cursor:pointer;transition:all .2s;backdrop-filter:blur(8px);user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;touch-action:manipulation}
       .ao3x-btn:hover{background:rgba(255,255,255,.95);box-shadow:0 4px 12px rgba(179,0,0,.15);transform:translateY(-1px)}
       .ao3x-btn:active{transform:scale(.98)}
 
@@ -1453,34 +1509,109 @@
     }
   }
 
+  class RequestError extends Error {
+    constructor(message, options = {}) {
+      super(message || '请求失败');
+      this.name = 'RequestError';
+      if (options.cause) this.cause = options.cause;
+      if (typeof options.status === 'number') this.status = options.status;
+      if (typeof options.retryAfterMs === 'number') this.retryAfterMs = options.retryAfterMs;
+      if (options.isNetworkError) this.isNetworkError = true;
+      if (options.isTimeout) this.isTimeout = true;
+      if (typeof options.code === 'string') this.code = options.code;
+      if (typeof options.shouldRetry === 'boolean') this.shouldRetry = options.shouldRetry;
+    }
+  }
+
+  function parseRetryAfter(headerValue) {
+    if (!headerValue) return null;
+    const seconds = Number(headerValue);
+    if (!Number.isNaN(seconds)) return Math.max(0, seconds * 1000);
+    const date = Date.parse(headerValue);
+    if (!Number.isNaN(date)) return Math.max(0, date - Date.now());
+    return null;
+  }
+
+  const RETRIABLE_STATUS = new Set([403, 408, 409, 425, 429, 500, 502, 503, 504, 522, 524]);
+
+  function shouldRetryError(err) {
+    if (!err) return false;
+    if (typeof err.shouldRetry === 'boolean') return err.shouldRetry;
+    if (err.noRetry) return false;
+    if (typeof err.status === 'number' && RETRIABLE_STATUS.has(err.status)) return true;
+    if (err.isTimeout) return true;
+    if (err.isNetworkError) return true;
+    const msg = (err.message || '').toLowerCase();
+    if (!msg) return false;
+    return msg.includes('timeout') || msg.includes('network') || msg.includes('fetch failed') || msg.includes('connection');
+  }
+
+  function computeRetryDelay(err, attempt) {
+    if (err && typeof err.retryAfterMs === 'number' && err.retryAfterMs >= 0) {
+      return Math.min(10000, Math.max(0, err.retryAfterMs));
+    }
+    if (err && err.isTimeout) {
+      return Math.min(2000, 300 + (attempt - 1) * 200);
+    }
+    return Math.min(5000, 500 + (attempt - 1) * 400 + Math.random() * 600);
+  }
+
   /* ================= OpenAI-compatible + SSE ================= */
   function resolveEndpoint(baseUrl, apiPath){ if(!baseUrl) throw new Error('请在设置中填写 Base URL'); const hasV1=/\/v1\//.test(baseUrl); return hasV1? baseUrl : `${trimSlash(baseUrl)}/${trimSlash(apiPath||'v1/chat/completions')}`; }
   function resolveModelsEndpoint(baseUrl){ if(!baseUrl) throw new Error('请填写 Base URL'); const m=baseUrl.match(/^(.*?)(\/v1\/.*)$/); return m? `${m[1]}/v1/models` : `${trimSlash(baseUrl)}/v1/models`; }
   async function fetchJSON(url, key, body){
-    const res = await fetch(url, { method:'POST', headers:{'content-type':'application/json', ...(key?{'authorization':`Bearer ${key}`}:{})}, body: JSON.stringify(body) });
-    if(!res.ok){ const t=await res.text(); throw new Error(`HTTP ${res.status}: ${t.slice(0,500)}`); }
-    return await res.json();
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(key ? { 'authorization': `Bearer ${key}` } : {})
+        },
+        body: JSON.stringify(body)
+      }).catch(err => {
+        throw new RequestError(err?.message || '网络请求失败', { cause: err, isNetworkError: true });
+      });
+      const retryAfterMs = parseRetryAfter(res.headers.get('retry-after'));
+      if (!res.ok) {
+        const t = await res.text();
+        throw new RequestError(`HTTP ${res.status}: ${t.slice(0, 500)}`, {
+          status: res.status,
+          retryAfterMs
+        });
+      }
+      return await res.json();
+    } catch (err) {
+      if (err instanceof RequestError) throw err;
+      throw new RequestError(err?.message || '请求失败', { cause: err, isNetworkError: true });
+    }
   }
   function supportsStreamingFetch(){ try{ return !!(window.ReadableStream && window.TextDecoder && window.AbortController); } catch{ return false; } }
 
-  async function postChatWithRetry({ endpoint, key, payload, stream, onDelta, onDone, onError, onFinishReason, label }){
-    const cfg = settings.get().watchdog; let attempt = 0;
+  async function postChatWithRetry({ endpoint, key, payload, stream, onDelta, onDone, onError, onFinishReason, label, onAttempt }){
+    const cfg = settings.get().watchdog || {};
+    const maxRetry = Math.max(0, cfg.maxRetry || 0);
+    let attempt = 0;
     while (true) {
       attempt++;
       try {
+        if (typeof onAttempt === 'function') {
+          try { onAttempt(attempt); } catch (hookErr) { d('chat:onAttempt-error', { label, attempt, error: hookErr?.message }); }
+        }
         d('chat:start', {label, attempt, stream});
         await postChatOnce({ endpoint, key, payload, stream, onDelta, onDone, onFinishReason, label, idleMs: cfg.idleMs, hardMs: cfg.hardMs });
         d('chat:done', {label, attempt});
         return;
       } catch (e) {
-        d('chat:error', {label, attempt, error: e.message});
-        // 检查是否是超时错误，如果是则显示toast提示
-        if (e.message && (e.message.includes('idle-timeout') || e.message.includes('hard-timeout'))) {
+        d('chat:error', {label, attempt, error: e.message, status: e.status});
+        const msg = e?.message || '';
+        if (msg && (msg.includes('idle-timeout') || msg.includes('hard-timeout'))) {
           UI.toast(`块 ${label} 因超时失败`);
         }
-        if (attempt > (cfg.maxRetry||0)) { onError && onError(e); return; }
-        d('chat:retrying', {label, attemptNext: attempt+1});
-        await sleep(500 + Math.random()*700);
+        const canRetry = attempt <= maxRetry && shouldRetryError(e);
+        if (!canRetry) { if (onError) onError(e); return; }
+        const delay = computeRetryDelay(e, attempt + 1);
+        d('chat:retrying', {label, attemptNext: attempt+1, delay});
+        await sleep(delay);
       }
     }
   }
@@ -1505,61 +1636,153 @@
     }
   }
   async function fetchSSEWithAbort(url, key, body, onDelta, onFinishReason, {label='chunk', idleMs=10000, hardMs=90000} = {}){
-    const ac = new AbortController(); const startedAt = performance.now(); let lastTick = startedAt;
-    let bytes = 0, events = 0; let finishReason = null;
+    const ac = new AbortController();
+    const startedAt = performance.now();
+    let lastTick = startedAt;
+    let bytes = 0, events = 0;
+    let finishReason = null;
+    let retryAfterMs = null;
+    let reader = null;
+    let res;
 
     const useIdle = !(idleMs != null && idleMs < 0);
     const useHard = !(hardMs != null && hardMs < 0);
-    const idleTimer = useIdle ? setInterval(()=>{
+    const idleTimer = useIdle ? setInterval(() => {
       const now = performance.now();
-      if (now - lastTick > idleMs) { if (useIdle) clearInterval(idleTimer); if (useHard) clearTimeout(hardTimer); d('sse:idle-timeout', {label, ms: now - lastTick}); ac.abort(new Error('idle-timeout')); }
-    }, Math.max(2000, Math.floor((idleMs || 0)/4) || 2000)) : null;
-    const hardTimer = useHard ? setTimeout(()=>{ if (useIdle && idleTimer) clearInterval(idleTimer); d('sse:hard-timeout', {label, ms: hardMs}); ac.abort(new Error('hard-timeout')); }, hardMs) : null;
+      if (now - lastTick > idleMs) {
+        if (useIdle) clearInterval(idleTimer);
+        if (useHard) clearTimeout(hardTimer);
+        d('sse:idle-timeout', { label, ms: now - lastTick });
+        ac.abort(new Error('idle-timeout'));
+      }
+    }, Math.max(2000, Math.floor((idleMs || 0) / 4) || 2000)) : null;
+    const hardTimer = useHard ? setTimeout(() => {
+      if (useIdle && idleTimer) clearInterval(idleTimer);
+      d('sse:hard-timeout', { label, ms: hardMs });
+      ac.abort(new Error('hard-timeout'));
+    }, hardMs) : null;
 
-    try{
-      const res = await fetch(url, { method:'POST', headers:{ 'content-type':'application/json', ...(key?{'authorization':`Bearer ${key}`}:{}) }, body: JSON.stringify(body), signal: ac.signal });
-      if(!res.ok){ const t=await res.text(); throw new Error(`HTTP ${res.status}: ${t}`); }
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(key ? { 'authorization': `Bearer ${key}` } : {})
+        },
+        body: JSON.stringify(body),
+        signal: ac.signal
+      }).catch(err => {
+        throw new RequestError(err?.message || '网络请求失败', { cause: err, isNetworkError: true });
+      });
 
-      const reader = res.body.getReader(); const td=new TextDecoder('utf-8');
-      let buf=''; let eventBuf=[];
+      retryAfterMs = parseRetryAfter(res.headers.get('retry-after'));
+      if (!res.ok) {
+        const t = await res.text();
+        throw new RequestError(`HTTP ${res.status}: ${t}`, { status: res.status, retryAfterMs });
+      }
+      if (!res.body || typeof res.body.getReader !== 'function') {
+        throw new RequestError('响应不支持流式读取', { status: res.status, retryAfterMs });
+      }
+
+      reader = res.body.getReader();
+      const td = new TextDecoder('utf-8');
+      let buf = '';
+      let eventBuf = [];
+      let sawDone = false;
+
       const flushEvent = () => {
         if (!eventBuf.length) return;
-        const joined = eventBuf.join('\n'); eventBuf = [];
-        try{
+        const joined = eventBuf.join('\n');
+        eventBuf = [];
+        try {
           const j = JSON.parse(joined);
           const choice = j?.choices?.[0];
           let delta = choice?.delta?.content ?? choice?.text ?? '';
-          // 过滤思考内容，只保留非思考内容作为译文
           if (delta) {
-            delta = delta.replace(/<thinking>[\s\S]*?<\/thinking>/g, '')  // 标准XML标签格式
-                         .replace(/<think>[\s\S]*?<\/think>/g, '')      // 简化XML标签格式
-                         .replace(/^Thought:\s*[^\n]*\n\n/gm, '')  // 行首的Thought前缀格式（必须有双换行）
-                         .replace(/^Thinking Process:\s*[^\n]*\n\n/gm, '')  // 行首的思考过程前缀（必须有双换行）
-                         .replace(/^Internal Monologue:\s*[^\n]*\n\n/gm, '')  // 行首的内心独白前缀（必须有双换行）
-                         .replace(/\[思考\][\s\S]*?\[\/思考\]/g, '');     // 中文标签格式
+            delta = delta.replace(/<thinking>[\s\S]*?<\/thinking>/g, '')
+                         .replace(/<think>[\s\S]*?<\/think>/g, '')
+                         .replace(/^Thought:\s*[^\n]*\n\n/gm, '')
+                         .replace(/^Thinking Process:\s*[^\n]*\n\n/gm, '')
+                         .replace(/^Internal Monologue:\s*[^\n]*\n\n/gm, '')
+                         .replace(/\[思考\][\s\S]*?\[\/思考\]/g, '');
           }
-          if (typeof choice?.finish_reason === 'string') finishReason = choice.finish_reason;
-          if(delta){ onDelta(delta); lastTick = performance.now(); bytes += delta.length; events++; }
-        }catch{}
+          if (typeof choice?.finish_reason === 'string') {
+            finishReason = choice.finish_reason;
+          }
+          if (delta) {
+            onDelta(delta);
+            lastTick = performance.now();
+            bytes += delta.length;
+            events++;
+          }
+        } catch (err) {
+          d('sse:parse-error', { label, error: err?.message, payload: joined });
+        }
       };
 
-      while(true){
-        const {value, done} = await reader.read();
-        if(done) break;
-        const chunk = td.decode(value, {stream:true});
-        buf += chunk; lastTick = performance.now(); bytes += chunk.length;
-        const lines = buf.split(/\r?\n/); buf = lines.pop() || '';
-        for(const line of lines){
-          if(line.startsWith('data:')){
-            const data=line.slice(5).trim(); if(data==='[DONE]'){ flushEvent(); break; }
-            eventBuf.push(data);
-          } else if(line.trim()===''){ flushEvent(); }
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (!value || !value.length) continue;
+        const chunk = td.decode(value, { stream: true });
+        if (!chunk) continue;
+        buf += chunk;
+        lastTick = performance.now();
+        bytes += chunk.length;
+        const lines = buf.split(/\r?\n/);
+        buf = lines.pop() ?? '';
+        for (const line of lines) {
+          if (line.startsWith('data:')) {
+            const data = line.slice(5).trim();
+            if (data === '[DONE]') {
+              flushEvent();
+              sawDone = true;
+              lastTick = performance.now();
+              break;
+            }
+            if (data) eventBuf.push(data);
+          } else if (!line.trim()) {
+            flushEvent();
+          }
         }
+        if (sawDone) break;
       }
+
       if (eventBuf.length) flushEvent();
-      d('sse:complete', {label, ms: Math.round(performance.now()-startedAt), bytes, events, finishReason});
-      onFinishReason && onFinishReason(finishReason);
-    } finally { if (idleTimer) clearInterval(idleTimer); if (hardTimer) clearTimeout(hardTimer); }
+      if (sawDone && reader) {
+        try { await reader.cancel(); } catch {}
+      }
+      d('sse:complete', { label, ms: Math.round(performance.now() - startedAt), bytes, events, finishReason, sawDone });
+      if (typeof onFinishReason === 'function') onFinishReason(finishReason);
+    } catch (err) {
+      if (err instanceof RequestError) {
+        if (retryAfterMs != null && typeof err.retryAfterMs !== 'number') err.retryAfterMs = retryAfterMs;
+        throw err;
+      }
+      if (err && err.name === 'AbortError') {
+        const reason = ac.signal?.reason;
+        const reasonMsg = reason instanceof Error ? reason.message : (typeof reason === 'string' ? reason : err.message || '请求已中断');
+        throw new RequestError(reasonMsg || '请求已中断', {
+          cause: err,
+          isTimeout: /timeout/i.test(reasonMsg),
+          retryAfterMs
+        });
+      }
+      throw new RequestError(err?.message || '网络请求失败', {
+        cause: err,
+        isNetworkError: err?.name === 'TypeError',
+        retryAfterMs
+      });
+    } finally {
+      if (idleTimer) clearInterval(idleTimer);
+      if (hardTimer) clearTimeout(hardTimer);
+      if (reader) {
+        try { reader.releaseLock && reader.releaseLock(); } catch {}
+      }
+      if (res && res.body && typeof res.body.cancel === 'function') {
+        try { res.body.cancel(); } catch {}
+      }
+    }
   }
 
   async function getModels(){
@@ -2127,9 +2350,13 @@
 
   /* ================= Controller ================= */
   const Controller = {
+    _isTranslating: false,
 
-
-
+    hasTranslationBlocks() {
+      const container = document.querySelector('#ao3x-render');
+      if (!container) return false;
+      return !!container.querySelector('.ao3x-block:not(.ao3x-summary-block)');
+    },
 
     // 获取作品名和章节名
     getWorkInfo() {
@@ -2351,13 +2578,15 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
 
     // 重试选中的块（手动选择）
     async retrySelectedBlocks(selectedIndices){
-      if (!selectedIndices || !selectedIndices.length) {
+      const normalized = Array.from(new Set((selectedIndices || []).map(i => Number(i)).filter(i => Number.isInteger(i) && i >= 0))).sort((a, b) => a - b);
+      if (!normalized.length) {
         UI.toast('未选择要重试的块');
         return;
       }
 
       const s = settings.get();
-      UI.toast(`开始重试 ${selectedIndices.length} 个选中块…`);
+      const totalSelected = normalized.length;
+      UI.toast(`开始重试 ${totalSelected} 个选中块…`);
 
       const c = document.querySelector('#ao3x-render');
       if (!c) {
@@ -2366,41 +2595,52 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       }
 
       // 彻底清理选中块的所有缓存和状态
-      selectedIndices.forEach(i => {
+      const minIndex = normalized[0];
+      normalized.forEach(i => {
         // 清除TransStore中的旧翻译和完成状态
         TransStore.set(String(i), '');
         if (TransStore._done) delete TransStore._done[i];
 
-        // 清理RenderState中的应用状态
-        if (RenderState && RenderState.lastApplied) {
-          RenderState.lastApplied[i] = '';
-        }
-
         // 清理Streamer中的缓冲区
-        if (typeof Streamer !== 'undefined' && Streamer._buf) {
+        if (typeof Streamer !== 'undefined' && typeof Streamer.reset === 'function') {
+          Streamer.reset(i);
+        } else if (typeof Streamer !== 'undefined') {
           Streamer._buf[i] = '';
           Streamer._dirty[i] = false;
         }
 
         // 重置DOM显示为待译状态
-        const anchor = c.querySelector(`[data-chunk-id="${i}"]`);
-        if (anchor) {
-          let transDiv = anchor.parentElement.querySelector('.ao3x-translation');
-          if (transDiv) {
-            transDiv.innerHTML = '<span class="ao3x-muted">（重新翻译中…）</span>';
-            // 强制重新设置最小高度
-            transDiv.style.minHeight = '60px';
-          }
+        Controller.applyDirect(i, '<span class="ao3x-muted">（重新翻译中…）</span>');
+        const anchorEl = c.querySelector(`[data-chunk-id="${i}"]`);
+        if (anchorEl) {
+          const transDiv = anchorEl.parentElement.querySelector('.ao3x-translation');
+          if (transDiv) transDiv.style.minHeight = '60px';
+        }
+        if (RenderState && RenderState.lastApplied) {
+          RenderState.lastApplied[i] = '';
         }
       });
 
+      if (TransStore && typeof TransStore.saveToCache === 'function') {
+        TransStore.saveToCache();
+      }
+
+      if (RenderState) {
+        if (typeof RenderState.nextToRender === 'number') {
+          RenderState.nextToRender = Math.min(RenderState.nextToRender, minIndex);
+        } else {
+          RenderState.nextToRender = minIndex;
+        }
+      }
+
       // 构造子计划（复用 data-original-html）
-      const subPlan = selectedIndices.map(i => {
+      const subPlan = normalized.map(i => {
         const block = c.querySelector(`.ao3x-block[data-index="${i}"]`);
         const html = block ? (block.getAttribute('data-original-html') || '') : '';
         return { index: i, html };
       });
 
+      const queue = normalized.slice();
       // 状态计数
       let inFlight = 0, completed = 0, failed = 0;
       updateKV({ 重试进行中: inFlight, 重试完成: completed, 重试失败: failed });
@@ -2410,6 +2650,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
         if (!planItem || !planItem.html) {
           failed++;
           updateKV({ 重试进行中: inFlight, 重试完成: completed, 重试失败: failed });
+          if (queue.length) setTimeout(launchNext, 0);
           return;
         }
 
@@ -2432,6 +2673,17 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
           },
           stream: s.stream.enabled,
           label,
+          onAttempt: (attempt) => {
+            if (attempt === 1) return;
+            if (Streamer && typeof Streamer.reset === 'function') Streamer.reset(idx);
+            TransStore.set(String(idx), '');
+            if (TransStore._done) delete TransStore._done[idx];
+            if (TransStore && typeof TransStore.saveToCache === 'function') {
+              TransStore.saveToCache();
+            }
+            if (RenderState && RenderState.lastApplied) RenderState.lastApplied[idx] = '';
+            Controller.applyDirect(idx, '<span class="ao3x-muted">（重试中…）</span>');
+          },
           onDelta: (delta) => {
             Streamer.push(idx, delta, (k, clean) => {
               TransStore.set(String(k), clean);
@@ -2461,7 +2713,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
             updateKV({ 重试进行中: inFlight, 重试完成: completed, 重试失败: failed });
 
             // 检查是否所有选中的块都完成了
-            if (completed + failed >= selectedIndices.length) {
+            if (completed + failed >= totalSelected) {
               // 清理状态显示，恢复正常显示
               setTimeout(() => {
                 const kvElement = document.querySelector('#ao3x-kv');
@@ -2474,6 +2726,8 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
                 UI.updateToolbarState();
               }, 1000);
             }
+
+            setTimeout(launchNext, 0);
           },
           onError: (e) => {
             inFlight--; failed++;
@@ -2489,7 +2743,7 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
             updateKV({ 重试进行中: inFlight, 重试完成: completed, 重试失败: failed });
 
             // 检查是否所有选中的块都完成了
-            if (completed + failed >= selectedIndices.length) {
+            if (completed + failed >= totalSelected) {
               // 清理状态显示，恢复正常显示
               setTimeout(() => {
                 const kvElement = document.querySelector('#ao3x-kv');
@@ -2502,37 +2756,28 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
                 UI.updateToolbarState();
               }, 1000);
             }
+
+            setTimeout(launchNext, 0);
           }
         });
       };
 
       // 按设置并发数重试选中的块
       const conc = Math.max(1, Math.min(4, s.concurrency || 2));
-      let ptr = 0;
 
-      const processNext = () => {
-        while (ptr < selectedIndices.length) {
-          const i = selectedIndices[ptr++];
-          postOne(i);
-
-          // 达到并发限制时暂停
-          if (inFlight >= conc) {
-            break;
-          }
-        }
-
-        // 如果还有未处理的块，稍后继续
-        if (ptr < selectedIndices.length && inFlight < conc) {
-          setTimeout(processNext, 100);
+      const launchNext = () => {
+        while (inFlight < conc && queue.length) {
+          const nextIdx = queue.shift();
+          postOne(nextIdx);
         }
       };
 
       // 开始处理
-      processNext();
+      launchNext();
 
       // 监控完成状态
       const checkCompletion = () => {
-        if (completed + failed >= selectedIndices.length) {
+        if (completed + failed >= totalSelected) {
           UI.toast(`选中块重试完成：成功 ${completed}，失败 ${failed}`);
 
           // 最后兜底刷新
@@ -2598,6 +2843,14 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
           },
           stream: s.stream.enabled,
           label,
+          onAttempt: (attempt) => {
+            if (attempt === 1) return;
+            if (Streamer && typeof Streamer.reset === 'function') Streamer.reset(idx);
+            TransStore.set(String(idx), '');
+            if (TransStore._done) delete TransStore._done[idx];
+            if (RenderState && RenderState.lastApplied) RenderState.lastApplied[idx] = '';
+            Controller.applyDirect(idx, '<span class="ao3x-muted">（重试中…）</span>');
+          },
           onDelta: (delta) => { Streamer.push(idx, delta, (k, clean)=>{ TransStore.set(String(k), clean); Controller.applyDirect(k, clean); }); },
           onFinishReason: (fr)=>{
             d('retry:finish_reason', {idx, fr});
@@ -2646,96 +2899,132 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
     },
     async startTranslate(){
       const nodes = collectChapterUserstuffSmart(); if(!nodes.length){ UI.toast('未找到章节正文'); return; }
+
+      const existingContainer = document.querySelector('#ao3x-render');
+      if (existingContainer) {
+        const existingBlocks = existingContainer.querySelectorAll('.ao3x-block:not(.ao3x-summary-block)');
+        if (existingBlocks.length) {
+          const hasRenderedTranslation = Array.from(existingBlocks).some(block => {
+            const trans = block.querySelector('.ao3x-translation');
+            if (!trans) return false;
+            const html = (trans.innerHTML || '').trim();
+            if (!html) return false;
+            const text = (trans.textContent || '').trim();
+            return text && !/[（(]待译[)）]/.test(text);
+          });
+          if (hasRenderedTranslation) {
+            UI.toast('当前页面已存在译文，如需重新翻译请先清除缓存或使用重试功能。');
+          } else {
+            UI.toast('翻译任务已在进行中，请稍候完成后再试。');
+          }
+          return;
+        }
+      }
       markSelectedNodes(nodes); renderContainer = null; UI.showToolbar(); View.info('准备中…');
 
-      // 重置缓存显示状态，因为现在要开始新的翻译
-      View.setShowingCache(false);
-      UI.updateToolbarState(); // 更新工具栏状态，重新显示双语对照按钮
-
-      const s = settings.get();
-      const allHtml = nodes.map(n=>n.innerHTML);
-      const fullHtml = allHtml.join('\n');
-      const ratio = Math.max(0.3, s.planner?.ratioOutPerIn ?? 0.7);
-      const reserve = s.planner?.reserve ?? 384;
-      const packSlack = Math.max(0.5, Math.min(1, s.planner?.packSlack ?? 0.95));
-
-      // 固定prompt token（不含正文）
-      const promptTokens = await estimatePromptTokensFromMessages([
-        { role:'system', content: s.prompt.system || '' },
-        { role:'user',   content: (s.prompt.userTemplate || '').replace('{{content}}','') }
-      ]);
-
-      const allText = stripHtmlToText(fullHtml);
-      const allEstIn = await estimateTokensForText(allText);
-
-      const cw   = s.model.contextWindow || 8192;
-      const maxT = s.gen.maxTokens || 1024;
-      // ★ 核心预算：k<1 时更“能塞”
-      // 约束1：out = k * in ≤ max_tokens  → in ≤ max_tokens / k
-      // 约束2：prompt + in + out + reserve ≤ cw → in(1+k) ≤ (cw - prompt - reserve)
-      const cap1 = maxT / ratio;
-      const cap2 = (cw - promptTokens - reserve) / (1 + ratio);
-      const maxInputBudgetRaw = Math.max(0, Math.min(cap1, cap2));
-      const maxInputBudget    = Math.floor(maxInputBudgetRaw * packSlack);
-
-      const slackSingle = s.planner?.singleShotSlackRatio ?? 0.15;
-      const canSingle   = allEstIn <= maxInputBudget * (1 + Math.max(0, slackSingle));
-
-      d('budget', { contextWindow: cw, promptTokens, reserve, userMaxTokens: maxT, ratio, packSlack, maxInputBudget, allEstIn, canSingle });
-
-      // 规划
-      let plan = [];
-      if (canSingle) {
-        const inTok = await estimateTokensForText(allText);
-        plan = [{ index: 0, html: fullHtml, text: allText, inTok }];
-      } else {
-        plan = await packIntoChunks(allHtml, maxInputBudget);
+      if (this.hasTranslationBlocks()) {
+        UI.toast('已存在译文，如需重新翻译请先清除缓存或重试失败的段落');
+        return;
       }
-      d('plan', { chunks: plan.length, totalIn: allEstIn, inputBudget: maxInputBudget });
 
-      renderPlanAnchors(plan);
-      View.setMode('trans');
-      RenderState.setTotal(plan.length);
-      Bilingual.setTotal(plan.length);
-      updateKV({ 进行中: 0, 完成: 0, 失败: 0 });
-
-      // 运行
+      this._isTranslating = true;
       try {
-        if (plan.length === 1 && canSingle && (s.planner?.trySingleShotOnce !== false)) {
-          View.info('单次请求翻译中…');
-          await this.translateSingle({
+        const nodes = collectChapterUserstuffSmart();
+        if(!nodes.length){ UI.toast('未找到章节正文'); return; }
+
+        markSelectedNodes(nodes); renderContainer = null; UI.showToolbar(); View.info('准备中…');
+
+        // 重置缓存显示状态，因为现在要开始新的翻译
+        View.setShowingCache(false);
+        UI.updateToolbarState(); // 更新工具栏状态，重新显示双语对照按钮
+
+        const s = settings.get();
+        const allHtml = nodes.map(n=>n.innerHTML);
+        const fullHtml = allHtml.join('\n');
+        const ratio = Math.max(0.3, s.planner?.ratioOutPerIn ?? 0.7);
+        const reserve = s.planner?.reserve ?? 384;
+        const packSlack = Math.max(0.5, Math.min(1, s.planner?.packSlack ?? 0.95));
+
+        // 固定prompt token（不含正文）
+        const promptTokens = await estimatePromptTokensFromMessages([
+          { role:'system', content: s.prompt.system || '' },
+          { role:'user',   content: (s.prompt.userTemplate || '').replace('{{content}}','') }
+        ]);
+
+        const allText = stripHtmlToText(fullHtml);
+        const allEstIn = await estimateTokensForText(allText);
+
+        const cw   = s.model.contextWindow || 8192;
+        const maxT = s.gen.maxTokens || 1024;
+        // ★ 核心预算：k<1 时更“能塞”
+        // 约束1：out = k * in ≤ max_tokens  → in ≤ max_tokens / k
+        // 约束2：prompt + in + out + reserve ≤ cw → in(1+k) ≤ (cw - prompt - reserve)
+        const cap1 = maxT / ratio;
+        const cap2 = (cw - promptTokens - reserve) / (1 + ratio);
+        const maxInputBudgetRaw = Math.max(0, Math.min(cap1, cap2));
+        const maxInputBudget    = Math.floor(maxInputBudgetRaw * packSlack);
+
+        const slackSingle = s.planner?.singleShotSlackRatio ?? 0.15;
+        const canSingle   = allEstIn <= maxInputBudget * (1 + Math.max(0, slackSingle));
+
+        d('budget', { contextWindow: cw, promptTokens, reserve, userMaxTokens: maxT, ratio, packSlack, maxInputBudget, allEstIn, canSingle });
+
+        // 规划
+        let plan = [];
+        if (canSingle) {
+          const inTok = await estimateTokensForText(allText);
+          plan = [{ index: 0, html: fullHtml, text: allText, inTok }];
+        } else {
+          plan = await packIntoChunks(allHtml, maxInputBudget);
+        }
+        d('plan', { chunks: plan.length, totalIn: allEstIn, inputBudget: maxInputBudget });
+
+        renderPlanAnchors(plan);
+        View.setMode('trans');
+        RenderState.setTotal(plan.length);
+        Bilingual.setTotal(plan.length);
+        updateKV({ 进行中: 0, 完成: 0, 失败: 0 });
+
+        // 运行
+        try {
+          if (plan.length === 1 && canSingle && (s.planner?.trySingleShotOnce !== false)) {
+            View.info('单次请求翻译中…');
+            await this.translateSingle({
+              endpoint: resolveEndpoint(s.api.baseUrl, s.api.path),
+              key: s.api.key,
+              stream: s.stream.enabled,
+              modelCw: s.model.contextWindow,
+              ratio,
+              promptTokens,
+              reserve,
+              contentHtml: plan[0].html,
+              inTok: plan[0].inTok,
+              userMaxTokens: s.gen.maxTokens
+            });
+            View.clearInfo();
+            finalFlushAll(1);
+            return;
+          }
+          View.info('文本较长：已启用智能分段 + 并发流水线…');
+          await this.translateConcurrent({
             endpoint: resolveEndpoint(s.api.baseUrl, s.api.path),
             key: s.api.key,
+            plan,
+            concurrency: s.concurrency,
             stream: s.stream.enabled,
             modelCw: s.model.contextWindow,
             ratio,
             promptTokens,
             reserve,
-            contentHtml: plan[0].html,
-            inTok: plan[0].inTok,
             userMaxTokens: s.gen.maxTokens
           });
           View.clearInfo();
-          finalFlushAll(1);
-          return;
+        } catch(e) {
+          d('fatal', e);
+          UI.toast('翻译失败：' + e.message);
         }
-        View.info('文本较长：已启用智能分段 + 并发流水线…');
-        await this.translateConcurrent({
-          endpoint: resolveEndpoint(s.api.baseUrl, s.api.path),
-          key: s.api.key,
-          plan,
-          concurrency: s.concurrency,
-          stream: s.stream.enabled,
-          modelCw: s.model.contextWindow,
-          ratio,
-          promptTokens,
-          reserve,
-          userMaxTokens: s.gen.maxTokens
-        });
-        View.clearInfo();
-      } catch(e) {
-        d('fatal', e);
-        UI.toast('翻译失败：' + e.message);
+      } finally {
+        this._isTranslating = false;
       }
     },
 
@@ -2761,6 +3050,14 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
           stream: !!settings.get().stream.enabled
         },
         label:`single#${i}`,
+        onAttempt: (attempt) => {
+          if (attempt === 1) return;
+          if (Streamer && typeof Streamer.reset === 'function') Streamer.reset(i);
+          TransStore.set(String(i), '');
+          if (TransStore._done) delete TransStore._done[i];
+          if (RenderState && RenderState.lastApplied) RenderState.lastApplied[i] = '';
+          Controller.applyDirect(i, '<span class="ao3x-muted">（重试中…）</span>');
+        },
         onDelta: (delta)=>{ Streamer.push(i, delta, (k, clean)=>{ View.setBlockTranslation(k, clean); }); },
         onFinishReason: (fr)=>{
           d('finish_reason', {i, fr});
@@ -2831,6 +3128,14 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
             max_tokens: maxTokensLocal,
             stream: !!settings.get().stream.enabled
           }, stream, label,
+          onAttempt: (attempt) => {
+            if (attempt === 1) return;
+            if (Streamer && typeof Streamer.reset === 'function') Streamer.reset(i);
+            TransStore.set(String(i), '');
+            if (TransStore._done) delete TransStore._done[i];
+            if (RenderState && RenderState.lastApplied) RenderState.lastApplied[i] = '';
+            Controller.applyDirect(i, '<span class="ao3x-muted">（重试中…）</span>');
+          },
           onDelta: (delta)=>{ Streamer.push(i, delta, (k, clean)=>{ View.setBlockTranslation(k, clean); }); },
           onFinishReason: async (fr)=>{
             d('finish_reason', {i, fr});
@@ -2855,6 +3160,14 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
                     temperature: settings.get().gen.temperature,
                     max_tokens: newMax,
                     stream: !!settings.get().stream.enabled
+                  },
+                  onAttempt: (attempt2) => {
+                    if (attempt2 === 1) return;
+                    if (Streamer && typeof Streamer.reset === 'function') Streamer.reset(i);
+                    TransStore.set(String(i), '');
+                    if (TransStore._done) delete TransStore._done[i];
+                    if (RenderState && RenderState.lastApplied) RenderState.lastApplied[i] = '';
+                    Controller.applyDirect(i, '<span class="ao3x-muted">（重试中…）</span>');
                   },
                   onDelta: (delta)=>{ Streamer.push(i, delta, (k, clean)=>{ View.setBlockTranslation(k, clean); }); },
                   onFinishReason: (fr2)=>{
@@ -3282,6 +3595,13 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
           stream: !!settings.get().stream.enabled
         },
         label: `summary-single#${i}`,
+        onAttempt: (attempt) => {
+          if (attempt === 1) return;
+          if (SummaryStreamer && typeof SummaryStreamer.reset === 'function') SummaryStreamer.reset(i);
+          SummaryStore.set(String(i), '');
+          if (SummaryStore._done) delete SummaryStore._done[i];
+          this.applyIncremental(i, '<span class="ao3x-muted">（重试中…）</span>');
+        },
         onDelta: (delta) => {
           // 使用专用的 SummaryStreamer，与翻译分离缓冲区
           SummaryStreamer.push(i, delta, (k, clean) => {
@@ -3371,6 +3691,13 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
           },
           stream,
           label,
+          onAttempt: (attempt) => {
+            if (attempt === 1) return;
+            if (SummaryStreamer && typeof SummaryStreamer.reset === 'function') SummaryStreamer.reset(i);
+            SummaryStore.set(String(i), '');
+            if (SummaryStore._done) delete SummaryStore._done[i];
+            this.applyIncremental(i, '<span class="ao3x-muted">（重试中…）</span>');
+          },
           onDelta: (delta) => {
             // 使用专用的 SummaryStreamer，与翻译分离缓冲区
             SummaryStreamer.push(i, delta, (k, clean) => {
@@ -3462,6 +3789,15 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       if (!raw) return '';
       const html = /[<][a-zA-Z]/.test(raw) ? raw : raw.replace(/\n/g, '<br/>');
       return sanitizeHTML(html);
+    },
+    reset(i){
+      if (typeof i === 'number') {
+        this._buf[i] = '';
+        this._dirty[i] = false;
+      } else {
+        this._buf = Object.create(null);
+        this._dirty = Object.create(null);
+      }
     },
     schedule(apply, force = false) {
       const { minFrameMs } = (typeof settings !== 'undefined' ? settings.get().stream : { minFrameMs: 40 });
