@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AO3 全文翻译+总结
 // @namespace    https://ao3-translate.example
-// @version      0.8.5
+// @version      0.8.6
 // @description  【翻译+总结双引擎】精确token计数；智能分块策略；流式渲染；章节总结功能；独立缓存系统；四视图切换（译文/原文/双语/总结）；长按悬浮菜单；移动端优化；OpenAI兼容API。
 // @match        https://archiveofourown.org/works/*
 // @match        https://archiveofourown.org/chapters/*
@@ -2001,6 +2001,24 @@
     }
   };
 
+  const PlanStore = {
+    _html: Object.create(null),
+    set(i, html) {
+      if (Number.isInteger(i) && html) {
+        this._html[i] = html;
+      }
+    },
+    get(i) {
+      if (Number.isInteger(i)) {
+        return this._html[i] || '';
+      }
+      return '';
+    },
+    clear() {
+      this._html = Object.create(null);
+    }
+  };
+
   const RenderState = {
     nextToRender: 0, total: 0, lastApplied: Object.create(null),
     setTotal(n){ this.total = n; this.nextToRender = 0; this.lastApplied = Object.create(null); },
@@ -2237,8 +2255,10 @@
     // 绑定控制按钮事件
     bindBlockControlEvents(box);
 
+    PlanStore.clear();
     plan.forEach((p,i)=>{
       const wrapper=document.createElement('div'); wrapper.className='ao3x-block'; wrapper.setAttribute('data-index', String(i)); wrapper.setAttribute('data-original-html', p.html);
+      PlanStore.set(i, p.html);
       const anchor=document.createElement('span'); anchor.className='ao3x-anchor'; anchor.setAttribute('data-chunk-id', String(i)); wrapper.appendChild(anchor);
       const div=document.createElement('div'); div.className='ao3x-translation'; div.innerHTML='<span class="ao3x-muted">（待译）</span>';
       wrapper.appendChild(div);
@@ -2276,6 +2296,7 @@
       if (c.querySelector(`[data-chunk-id="${i}"]`)) continue; // already exists
       const p = plan[i];
       const wrapper=document.createElement('div'); wrapper.className='ao3x-block'; wrapper.setAttribute('data-index', String(i)); wrapper.setAttribute('data-original-html', p.html);
+      PlanStore.set(i, p.html);
       const anchor=document.createElement('span'); anchor.className='ao3x-anchor'; anchor.setAttribute('data-chunk-id', String(i)); wrapper.appendChild(anchor);
       const div=document.createElement('div'); div.className='ao3x-translation'; div.innerHTML='<span class="ao3x-muted">（待译）</span>';
       wrapper.appendChild(div);
@@ -2637,7 +2658,8 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       const subPlan = normalized.map(i => {
         const block = c.querySelector(`.ao3x-block[data-index="${i}"]`);
         const html = block ? (block.getAttribute('data-original-html') || '') : '';
-        return { index: i, html };
+        const fallback = html || PlanStore.get(i);
+        return { index: i, html: fallback };
       });
 
       const queue = normalized.slice();
@@ -2814,7 +2836,8 @@ const shouldUseCloud = hasEvansToken || isExactEvansUA;
       const subPlan = indices.map(i => {
         const block = c.querySelector(`.ao3x-block[data-index="${i}"]`);
         const html = block ? (block.getAttribute('data-original-html') || '') : '';
-        return { index: i, html };
+        const fallback = html || PlanStore.get(i);
+        return { index: i, html: fallback };
       });
 
       // 状态计数
