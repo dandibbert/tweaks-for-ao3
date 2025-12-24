@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         AO3 标签预览面板 (优化版) - 稳定长按&防误触&彻底禁菜单 [修复版]
+// @name        AO3 标签预览面板 (优化版) - 稳定长按&防误触&彻底禁菜单 [修复版]
 // @namespace    http://tampermonkey.net/
-// @version      2.7-fix1
-// @description  AO3 标签预览面板；仅长按模式下点触无动作，长按弹面板；面板打开期间全局禁用右键/长按菜单；点击空白必关；不阻塞滑动；防幽灵点击。修复：仅在需要时才抑制“幽灵点击”，避免误伤非 tag 链接/按钮。
+// @version      2.8-fixed-anchors
+// @description  AO3 标签预览面板；仅长按模式下点触无动作，长按弹面板；面板打开期间全局禁用右键/长按菜单；点击空白必关；不阻塞滑动；防幽灵点击。修复：解决 Filter 按钮等页内锚点失效的问题，通过检查原始 href 和 class 属性精准识别标签。
 // @match        https://archiveofourown.org/*
 // @grant        GM_addStyle
 // @grant        GM_registerMenuCommand
@@ -21,11 +21,11 @@
       tapMaxDuration: 200,
       tapConfirmDelay: 90,
       longPressDuration: 500,
-      ignoreClickWindow: 450, // 仅在需要时启动，避免全局误伤
+      ignoreClickWindow: 450,
       animationDuration: 220,
       copyHintDuration: 1400,
       vibrationDuration: 15,
-      contextGuardWindow: 800 // 面板开启后额外抑制 contextmenu 的时间(ms)
+      contextGuardWindow: 800
     },
     panel: {
       width: '85%',
@@ -53,10 +53,30 @@
   function readOnlyLongPress() { try { return localStorage.getItem(STORAGE_KEY) === '1'; } catch { return false; } }
   function writeOnlyLongPress(v){ try { localStorage.setItem(STORAGE_KEY, v ? '1' : '0'); } catch {} }
 
+  // —— 核心修复部分：更精准的标签识别逻辑 —— //
   function isTagLink(el) {
     if (!el || el.tagName !== 'A' || !el.href) return false;
+
+    // 1. 【修复】排除页内锚点（如 #work-filters, #main 等）
+    // 使用 getAttribute 获取原始值，避免浏览器自动补全当前页面的绝对路径导致包含 /tags/
+    const rawHref = el.getAttribute('href');
+    if (rawHref && rawHref.startsWith('#')) return false;
+
+    // 2. 优先利用 AO3 原生 class 判定（最准确）
+    if (el.classList.contains('tag')) return true;
+
+    // 3. 兜底逻辑：分析 href，但要更严格
     const href = el.href;
-    if (href.includes('/tags/') && !href.includes('/tags/search') && !href.includes('/tags/feed') && !href.includes('/tags/new')) return true;
+
+    // 排除特定系统功能页
+    if (href.includes('/tags/search') || href.includes('/tags/feed') || href.includes('/tags/new')) return false;
+    // 排除编辑/管理页面 (避免误触管理按钮)
+    if (href.includes('/edit') || href.includes('/wrangle')) return false;
+
+    // 识别标签链接
+    if (href.includes('/tags/')) return true;
+
+    // 识别 works 列表中的筛选链接
     if (href.includes('/works?')) {
       if (href.includes('page=') || href.includes('show=')) return false;
       const hasTag = href.includes('tag_id=') ||
@@ -71,11 +91,15 @@
     }
     return false;
   }
+
   function findTagFrom(target){
     let el = target;
-    while (el && el !== document) {
+    // 向上查找，但限制层级避免性能消耗，且避免误判整个容器
+    let depth = 0;
+    while (el && el !== document && depth < 5) {
       if (isTagLink(el)) return el;
       el = el.parentElement;
+      depth++;
     }
     return null;
   }
@@ -120,6 +144,7 @@
     .ao3-tag-panel .copy-hint.show{ opacity:1!important; }
 
     /* 仅长按模式时，抑制 tag 的系统长按菜单 */
+    .ao3-onlylongpress a.tag,
     .ao3-onlylongpress a[href*="/tags/"],
     .ao3-onlylongpress a[href*="/works?"]{
       -webkit-touch-callout: none !important;
@@ -127,7 +152,6 @@
     }
   `);
 
-  // —— 新增：仅在需要时抑制后续“幽灵点击” —— //
   function armIgnoreClicks() {
     state.ignoreClickUntil = Date.now() + CONFIG.ui.ignoreClickWindow;
   }
@@ -150,7 +174,6 @@
       document.body.appendChild(this.overlay); document.body.appendChild(this.el);
 
       const close = (ev) => { ev.preventDefault(); ev.stopPropagation(); this.hide(); };
-      // 覆盖层多事件关闭，确保“点击空白必关”
       this.overlay.addEventListener('click', close, { passive: false });
       this.overlay.addEventListener('mousedown', close, { passive: false });
       this.overlay.addEventListener('touchstart', close, { passive: false });
@@ -221,26 +244,21 @@
     return true;
   }
 
-  // —— 关键修复：全局拦截 contextmenu —— //
   document.addEventListener('contextmenu', (e) => {
-    // 面板打开期间：无条件拦截（解决“面板后紧跟弹菜单”）
     if (state.panelOpen || Date.now() < state.suppressContextUntil) {
       e.preventDefault(); e.stopPropagation(); return;
     }
-    // 仅长按模式下：对 tag 链接拦截，以免长按出系统菜单而非面板
     if (state.onlyLongPress && findTagFrom(e.target)) {
       e.preventDefault(); e.stopPropagation(); return;
     }
   }, true);
 
-  // 捕获阶段 click 拦截（幽灵点击/仅长按下的点击阻断）
   document.addEventListener('click', (e) => {
     if (Date.now() < state.ignoreClickUntil) { e.preventDefault(); e.stopPropagation(); return; }
     if (!state.onlyLongPress) return;
     if (findTagFrom(e.target)) { e.preventDefault(); e.stopPropagation(); }
   }, true);
 
-  // —— Touch 流程 —— //
   if (supportsTouch()) {
     document.addEventListener('touchstart', (e) => {
       const t = e.touches[0];
@@ -255,9 +273,10 @@
           const cur = e.touches[0];
           if (!cur || state.moved || state.intentScroll) return;
           const target = document.elementFromPoint(cur.clientX, cur.clientY);
+          // 这里的 openPanelFor 会调用 findTagFrom，如果返回 null (即点击的是 Filter)，就不会触发
           if (openPanelFor(target, e)) {
             state.longPressFired = true;
-            armIgnoreClicks(); // 仅在真正打开面板时抑制后续“幽灵点击”
+            armIgnoreClicks();
           }
         }, CONFIG.ui.longPressDuration);
       }
@@ -275,17 +294,18 @@
     }, { passive: true, capture: true });
 
     document.addEventListener('touchend', (e) => {
-      // 【修复】不再无条件 arm ignoreClickUntil
       clearTimeout(state.longPressTimer); state.longPressTimer = null;
 
       if (state.onlyLongPress) {
         if (!state.longPressFired) {
           const touch = e.changedTouches && e.changedTouches[0];
           const target = touch ? document.elementFromPoint(touch.clientX, touch.clientY) : e.target;
+          
+          // 【逻辑闭环】这里再次检查 findTagFrom
+          // 如果是 Filter 按钮，findTagFrom 返回 null，代码跳过 if 块，浏览器执行默认点击行为
           if (findTagFrom(target)) { 
-            // 仅拦截 tag 的轻点，其他元素不受影响
             e.preventDefault(); e.stopPropagation();
-            armIgnoreClicks(); // 只有拦截时才抑制合成 click，避免误伤
+            armIgnoreClicks();
           }
         }
         return;
@@ -304,23 +324,20 @@
         const afterY = window.pageYOffset || document.documentElement.scrollTop || 0;
         if (Math.abs(afterY - endScrollY) > 0) return;
         if (openPanelFor(endTarget, e)) {
-          armIgnoreClicks(); // 非仅长按模式下，轻点开面板后抑制“幽灵点击”
+          armIgnoreClicks();
         }
       }, CONFIG.ui.tapConfirmDelay);
     }, { passive: false, capture: true });
   } else {
-    // 非触屏（桌面）环境
     document.addEventListener('click', (e) => {
       if (Date.now() < state.ignoreClickUntil) { e.preventDefault(); e.stopPropagation(); return; }
       const tag = findTagFrom(e.target);
       if (!tag) return;
       if (state.onlyLongPress) { e.preventDefault(); e.stopPropagation(); return; }
       e.preventDefault(); e.stopPropagation(); panel.show(tag);
-      // 桌面下无需 armIgnoreClicks（没有合成 click 问题）
     }, true);
   }
 
-  // ESC 关闭
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && state.panelOpen) panel.hide();
   }, true);
