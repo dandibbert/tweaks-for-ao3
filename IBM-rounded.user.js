@@ -1,80 +1,64 @@
 // ==UserScript==
 // @name         IBM ROUNDED 字体样式-修复Icon
 // @namespace    http://tampermonkey.net/
-// @version      0.3
-// @description  修改网页字体为IBM ROUNDED 標準體, 并保留图标显示
+// @version      0.4
+// @description  修改网页普通文字为 IBM ROUNDED 標準體，保留图标字体与代码等宽字体
 // @match        *://*/*
 // @grant        GM_addStyle
 // ==/UserScript==
 
-(function() {
+(function () {
     'use strict';
-    
-    // 导入IBM ROUNDED字体
+
+    // 保留原字体来源，不替换网站自带的图标字体。
+    GM_addStyle("@import url('https://ibmrounded.773421.xyz/result.css');");
+
+    // Google AI Studio 等站点使用图标字体的连字（如 menu、more_vert）。
+    // 禁止覆盖图标元素（以及它们的子元素）的 font-family，
+    // 让网站原有的 Material Icons / Symbols、Font Awesome 等规则正常生效。
+    const iconSelectors = [
+        'i', 'svg', 'img', 'canvas',
+        'mat-icon', 'md-icon', 'mdc-icon', 'g-icon', 'google-icon',
+        'ion-icon', 'sl-icon', 'iconify-icon', 'vaadin-icon',
+        '[role="img"]', '[data-icon]', '[data-lucide]',
+        '[class*="icon" i]', '[id*="icon" i]',
+        '[class*="symbol" i]',
+        '.fa', '.fas', '.far', '.fab', '.fal', '.fad',
+        '.glyphicon', '.anticon', '.octicon',
+        '.mdi', '[class^="mdi-"]',
+        '.bi', '[class^="bi-"]',
+        '.pi', '[class^="pi-"]',
+    ];
+
+    const monospaceSelectors = [
+        'code', 'pre', 'kbd', 'samp', 'tt',
+        '.blob-code', '.blob-code-inner', '.highlight', '[class^="pl-"]',
+    ];
+
+    // 排除元素本身及其后代，避免给 <mat-icon><span>menu</span></mat-icon>
+    // 或带语法高亮的 <code><span>...</span></code> 重新套上普通字体。
+    const exclusions = [...iconSelectors, ...monospaceSelectors]
+        .flatMap(selector => [selector, `${selector} *`])
+        .join(',\n            ');
+
     GM_addStyle(`
-        @import url('https://ibmrounded.773421.xyz/result.css');
-    `);
-    
-    // 定义需要排除的元素选择器列表，不改变它们的字体
-    const exclusions = `
-        i,
-        svg,
-        img,
-        /* Google Material Icons / Symbols */
-        .material-icons,
-        [class*="material-symbols-"],
-        /* Font Awesome */
-        .fa, .fas, .far, .fab, .fal, [class*="fa-"],
-        /* Bootstrap Glyphicon */
-        .glyphicon, [class*="glyphicon-"],
-        /* Ant Design & Element UI & Ionic*/
-        .anticon,
-        [class^="el-icon-"],
-        ion-icon,
-        /* GitHub Octicons */
-        .octicon,
-        /* 兜底: 包含 icon 字符的class */
-        [class*="icon"],
-        /* 等宽字体元素 */
-        code, pre, kbd, samp, tt,
-        .blob-code,
-        .blob-code-inner,
-        .highlight,
-        [class^="pl-"]
-    `;
-    
-    GM_addStyle(`
-        /* ----- 规则 1: 修改全局字体，但排除图标元素 ----- */
-        *:not(${exclusions}) {
+        /* 普通文字统一使用 IBM ROUNDED；图标和代码由原网站决定字体。 */
+        *:not(:is(${exclusions})) {
             font-family: 'IBM ROUNDED 標準體', sans-serif !important;
         }
-        
-        /* ----- 规则 2: 特定元素规则 ----- */
+
+        /* 保留原脚本对 Google 搜索标题字号的微调。 */
         #res h3, #extrares h3 {
             font-size: 17px !important;
             line-height: 1.3;
-            font-family: 'IBM ROUNDED 標準體', sans-serif !important;
         }
-        
-        /* ----- 规则 3: 确保排除元素保持原样 ----- */
-        ${exclusions} {
-            font-family: inherit !important;
-        }
-        
-        /* ----- 规则 4: 等宽字体元素恢复默认 ----- */
-        code, pre, kbd, samp, tt,
-        .blob-code,
-        .blob-code-inner,
-        .highlight,
-        [class^="pl-"] {
-            font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace !important;
-        }
-        
-        /* ----- 规则 5: 图标元素恢复默认 ----- */
-        .octicon, .material-icons, .fa, .fas, .far, .fab, .glyphicon, .anticon, ion-icon {
-            font-family: inherit !important;
+
+        /* 代码块及其后代继续使用等宽字体。 */
+        ${monospaceSelectors.join(',\n        ')} {
+            font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas,
+                "Liberation Mono", Menlo, monospace !important;
         }
     `);
-    
-    console.log("IBM ROUNDED 字体样式脚本已应用，图标已排除。");
+
+    console.log('IBM ROUNDED 字体样式已应用，图标保留网站原有字体。');
 })();
